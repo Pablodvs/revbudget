@@ -1,0 +1,25 @@
+{
+  "name": "revbudget",
+  "private": true,
+  "type": "module",
+  "workspaces": ["shared", "server", "dashboard"],
+  "scripts": {
+    "dev:server": "bun --hot server/src/index.ts",
+    "dev:dashboard": "bun run --cwd dashboard dev",
+    "dev": "bun run dev:server & bun run dev:dashboard",
+    "build": "bun run --cwd dashboard build && bun build server/src/index.ts --target=bun --outdir=dist",
+    "start": "NODE_ENV=production bun dist/index.js",
+    "db:generate": "bun run --cwd server db:generate",
+    "db:migrate": "bun server/src/db/migrate.ts",
+    "db:seed": "bun server/src/db/seed.ts",
+    "db:studio": "bun run --cwd server db:studio",
+    "test": "bun test",
+    "lint": "bunx biome check .",
+    "format": "bunx biome format --write .",
+    "typecheck": "bun run --cwd shared typecheck && bun run --cwd server typecheck && bun run --cwd dashboard typecheck"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "typescript": "^5.6.3"
+  }
+}

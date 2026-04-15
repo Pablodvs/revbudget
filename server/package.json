@@ -1,0 +1,25 @@
+{
+  "name": "server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "bunx tsc --noEmit",
+    "db:generate": "bunx drizzle-kit generate",
+    "db:migrate": "bunx drizzle-kit migrate",
+    "db:seed": "bun src/db/seed.ts",
+    "db:studio": "bunx drizzle-kit studio"
+  },
+  "dependencies": {
+    "shared": "workspace:*",
+    "hono": "^4.6.12",
+    "@hono/zod-validator": "^0.4.1",
+    "zod": "^3.23.8",
+    "drizzle-orm": "^0.36.4",
+    "grammy": "^1.32.0"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.28.1",
+    "bun-types": "^1.1.38"
+  }
+}

@@ -1,0 +1,111 @@
+import { sql } from 'drizzle-orm';
+import { check, index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+
+export const PARSE_FAILURE_ERROR_CODES = ['empty', 'no_match', 'invalid_amount'] as const;
+export type ParseFailureErrorCode = (typeof PARSE_FAILURE_ERROR_CODES)[number];
+
+export const wallets = sqliteTable('wallets', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  name: text('name').notNull(),
+  budget: integer('budget').notNull(),
+  currency: text('currency').notNull().default('EUR'),
+  color: text('color').notNull(),
+  icon: text('icon'),
+  isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
+  createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text('updated_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+export const transactions = sqliteTable(
+  'transactions',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    walletId: integer('wallet_id').references(() => wallets.id, { onDelete: 'set null' }),
+    amount: integer('amount').notNull(),
+    currency: text('currency').notNull().default('EUR'),
+    merchant: text('merchant').notNull(),
+    merchantDisplay: text('merchant_display').notNull(),
+    description: text('description'),
+    rawText: text('raw_text').notNull(),
+    status: text('status', { enum: ['pending', 'classified', 'ignored'] })
+      .notNull()
+      .default('pending'),
+    telegramMessageId: integer('telegram_message_id'),
+    classifiedAt: text('classified_at'),
+    transactionDate: text('transaction_date').notNull(),
+    createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text('updated_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (t) => ({
+    statusIdx: index('idx_tx_status').on(t.status),
+    walletIdx: index('idx_tx_wallet').on(t.walletId),
+    dateIdx: index('idx_tx_date').on(t.transactionDate),
+    statusCheck: check('status_check', sql`${t.status} IN ('pending','classified','ignored')`),
+    amountCheck: check('amount_positive', sql`${t.amount} > 0`),
+  }),
+);
+
+export const parseFailures = sqliteTable(
+  'parse_failures',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    rawText: text('raw_text').notNull(),
+    errorCode: text('error_code', { enum: PARSE_FAILURE_ERROR_CODES }).notNull(),
+    receivedAt: text('received_at').notNull(),
+    telegramMessageId: integer('telegram_message_id'),
+    resolvedAt: text('resolved_at'),
+    createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (t) => ({
+    resolvedIdx: index('idx_pf_resolved').on(t.resolvedAt),
+    errorCheck: check(
+      'error_code_check',
+      sql`${t.errorCode} IN ('empty','no_match','invalid_amount')`,
+    ),
+  }),
+);
+
+export const merchantRules = sqliteTable(
+  'merchant_rules',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    pattern: text('pattern').notNull().unique(),
+    walletId: integer('wallet_id')
+      .notNull()
+      .references(() => wallets.id, { onDelete: 'cascade' }),
+    matchType: text('match_type', { enum: ['exact', 'contains'] })
+      .notNull()
+      .default('exact'),
+    createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text('updated_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (t) => ({
+    matchCheck: check('match_type_check', sql`${t.matchType} IN ('exact','contains')`),
+  }),
+);
+
+export const budgetPeriods = sqliteTable(
+  'budget_periods',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    walletId: integer('wallet_id')
+      .notNull()
+      .references(() => wallets.id, { onDelete: 'cascade' }),
+    month: text('month').notNull(),
+    budgetOverride: integer('budget_override'),
+    notes: text('notes'),
+    createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (t) => ({
+    walletMonthUnique: uniqueIndex('budget_periods_wallet_month_unique').on(t.walletId, t.month),
+  }),
+);
+
+export type WalletRow = typeof wallets.$inferSelect;
+export type WalletInsert = typeof wallets.$inferInsert;
+export type TransactionRow = typeof transactions.$inferSelect;
+export type TransactionInsert = typeof transactions.$inferInsert;
+export type MerchantRuleRow = typeof merchantRules.$inferSelect;
+export type MerchantRuleInsert = typeof merchantRules.$inferInsert;
+export type ParseFailureRow = typeof parseFailures.$inferSelect;
+export type ParseFailureInsert = typeof parseFailures.$inferInsert;

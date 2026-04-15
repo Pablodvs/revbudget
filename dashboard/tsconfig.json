@@ -1,0 +1,13 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "preserve",
+    "types": ["bun-types"],
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "paths": {
+      "shared": ["../shared/src/index.ts"],
+      "server": ["../server/src/app.ts"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.vue", "vite.config.ts"]
+}
