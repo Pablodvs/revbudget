@@ -48,4 +48,10 @@ export const walletsRoute = new Hono()
       if (!row) throw new HTTPException(404, { message: 'wallet_not_found' });
       return c.json(row);
     },
-  );
+  )
+  .delete('/:id', zValidator('param', IdParamSchema), async (c) => {
+    const { id } = c.req.valid('param');
+    const [row] = await db.delete(wallets).where(eq(wallets.id, id)).returning();
+    if (!row) throw new HTTPException(404, { message: 'wallet_not_found' });
+    return c.json({ ok: true });
+  });

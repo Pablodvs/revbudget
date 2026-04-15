@@ -53,3 +53,22 @@ export function useCreateWallet() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['wallets'] }),
   });
 }
+
+export function useDeleteWallet() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: number) => {
+      const res = await api.api.wallets[':id'].$delete({
+        param: { id: String(id) },
+      });
+      if (!res.ok) throw new Error('delete failed');
+      return true;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['wallets'] });
+      qc.invalidateQueries({ queryKey: ['stats'] });
+      qc.invalidateQueries({ queryKey: ['transactions'] });
+      qc.invalidateQueries({ queryKey: ['rules'] });
+    },
+  });
+}

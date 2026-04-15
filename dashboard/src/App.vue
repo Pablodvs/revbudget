@@ -7,6 +7,7 @@ theme.init();
 
 const navLinks = [
   { to: '/', label: 'Overview' },
+  { to: '/wallets', label: 'Wallets' },
   { to: '/transactions', label: 'Transactions' },
   { to: '/rules', label: 'Rules' },
   { to: '/stats', label: 'Stats' },
