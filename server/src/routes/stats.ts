@@ -1,10 +1,18 @@
 import { zValidator } from '@hono/zod-validator';
-import { and, desc, eq, gte, lt, sql, sum } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, lt, ne, sql, sum } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { MonthQuerySchema, currentMonth, monthBounds, shiftMonth, toZonedYearMonth } from 'shared';
 import { config } from '../config';
 import { db } from '../db';
 import { transactions, wallets } from '../db/schema';
+
+type WalletAgg = { spent: number; income: number; count: number };
+const emptyAgg = (): WalletAgg => ({ spent: 0, income: 0, count: 0 });
+const signedSpent = (type: string, amount: number): number => {
+  if (type === 'expense' || type === 'adjustment') return amount;
+  if (type === 'refund') return -amount;
+  return 0;
+};
 
 const tz = () => config.APP_TIMEZONE;
 
@@ -19,6 +27,7 @@ export const statsRoute = new Hono()
     const totals = await db
       .select({
         walletId: transactions.walletId,
+        type: transactions.type,
         total: sum(transactions.amount).mapWith(Number),
         count: sql<number>`COUNT(*)`.mapWith(Number),
       })
@@ -30,26 +39,38 @@ export const statsRoute = new Hono()
           lt(transactions.transactionDate, bounds.endISO),
         ),
       )
-      .groupBy(transactions.walletId);
+      .groupBy(transactions.walletId, transactions.type);
 
-    const byWallet = new Map(totals.map((t) => [t.walletId, t]));
+    const byWallet = new Map<number, WalletAgg>();
+    for (const r of totals) {
+      if (r.walletId == null) continue;
+      const agg = byWallet.get(r.walletId) ?? emptyAgg();
+      const total = r.total ?? 0;
+      if (r.type === 'income') agg.income += total;
+      else agg.spent += signedSpent(r.type, total);
+      agg.count += r.count ?? 0;
+      byWallet.set(r.walletId, agg);
+    }
+
     const perWallet = walletRows.map((w) => {
-      const agg = byWallet.get(w.id);
+      const agg = byWallet.get(w.id) ?? emptyAgg();
       return {
         walletId: w.id,
         walletName: w.name,
         color: w.color,
         icon: w.icon,
         budget: w.budget,
-        spent: agg?.total ?? 0,
-        transactionCount: agg?.count ?? 0,
+        spent: agg.spent,
+        income: agg.income,
+        transactionCount: agg.count,
       };
     });
     const totalSpent = perWallet.reduce((acc, w) => acc + w.spent, 0);
+    const totalIncome = perWallet.reduce((acc, w) => acc + w.income, 0);
     const totalBudget = perWallet.reduce((acc, w) => acc + w.budget, 0);
     const transactionCount = perWallet.reduce((acc, w) => acc + w.transactionCount, 0);
 
-    return c.json({ month, totalSpent, totalBudget, transactionCount, perWallet });
+    return c.json({ month, totalSpent, totalBudget, totalIncome, transactionCount, perWallet });
   })
   .get('/trends', async (c) => {
     const now = currentMonth(new Date(), tz());
@@ -72,11 +93,13 @@ export const statsRoute = new Hono()
         walletId: transactions.walletId,
         transactionDate: transactions.transactionDate,
         amount: transactions.amount,
+        type: transactions.type,
       })
       .from(transactions)
       .where(
         and(
           eq(transactions.status, 'classified'),
+          ne(transactions.type, 'income'),
           gte(transactions.transactionDate, startBounds.startISO),
           lt(transactions.transactionDate, endBounds.endISO),
         ),
@@ -87,14 +110,15 @@ export const statsRoute = new Hono()
       if (r.walletId === null) continue;
       const localMonth = toZonedYearMonth(r.transactionDate, tz());
       const key = `${r.walletId}:${localMonth}`;
-      totalsByWalletMonth.set(key, (totalsByWalletMonth.get(key) ?? 0) + r.amount);
+      const delta = signedSpent(r.type, r.amount);
+      totalsByWalletMonth.set(key, (totalsByWalletMonth.get(key) ?? 0) + delta);
     }
 
     const series = walletRows.map((w) => ({
       walletId: w.id,
       walletName: w.name,
       color: w.color,
-      values: months.map((m) => totalsByWalletMonth.get(`${w.id}:${m}`) ?? 0),
+      values: months.map((m) => Math.max(0, totalsByWalletMonth.get(`${w.id}:${m}`) ?? 0)),
     }));
 
     const topMerchantRows = await db
@@ -107,6 +131,7 @@ export const statsRoute = new Hono()
       .where(
         and(
           eq(transactions.status, 'classified'),
+          inArray(transactions.type, ['expense', 'adjustment']),
           gte(transactions.transactionDate, startBounds.startISO),
           lt(transactions.transactionDate, endBounds.endISO),
         ),

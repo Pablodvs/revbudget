@@ -1,10 +1,14 @@
 <script setup lang="ts">
 import { formatCents } from 'shared';
-import type { Transaction } from 'shared';
+import type { Transaction, TransactionType } from 'shared';
 import { computed, ref } from 'vue';
 import Modal from '../components/Modal.vue';
 import MonthNav from '../components/MonthNav.vue';
-import { useTransactions, useUpdateTransaction } from '../composables/useTransactions';
+import {
+  useCreateTransaction,
+  useTransactions,
+  useUpdateTransaction,
+} from '../composables/useTransactions';
 import { useWallets } from '../composables/useWallets';
 import { useFiltersStore } from '../stores/filters';
 
@@ -22,9 +26,34 @@ const txs = useTransactions(() => ({
   limit: 500,
 }));
 const update = useUpdateTransaction();
+const create = useCreateTransaction();
 
 const editing = ref<Transaction | null>(null);
-const form = ref({ walletId: null as number | null, amount: 0, description: '' });
+const form = ref({
+  walletId: null as number | null,
+  amount: 0,
+  description: '',
+  type: 'expense' as TransactionType,
+  relatedTxId: null as number | null,
+});
+
+const creating = ref(false);
+const createForm = ref({
+  walletId: null as number | null,
+  amount: 0,
+  merchantDisplay: '',
+  description: '',
+  type: 'expense' as TransactionType,
+  transactionDate: new Date().toISOString().slice(0, 16),
+  relatedTxId: null as number | null,
+});
+
+const TYPE_META: Record<TransactionType, { label: string; cls: string; sign: '+' | '-' | '' }> = {
+  expense: { label: 'expense', cls: 'bg-zinc-800 text-zinc-300', sign: '-' },
+  income: { label: 'income', cls: 'bg-emerald-500/10 text-emerald-300', sign: '+' },
+  refund: { label: 'refund', cls: 'bg-sky-500/10 text-sky-300', sign: '+' },
+  adjustment: { label: 'adjustment', cls: 'bg-amber-500/10 text-amber-300', sign: '-' },
+};
 
 function openEdit(tx: Transaction) {
   editing.value = tx;
@@ -32,6 +61,8 @@ function openEdit(tx: Transaction) {
     walletId: tx.walletId,
     amount: tx.amount,
     description: tx.description ?? '',
+    type: tx.type,
+    relatedTxId: tx.relatedTxId,
   };
 }
 
@@ -43,9 +74,41 @@ async function save() {
       walletId: form.value.walletId,
       amount: Number(form.value.amount),
       description: form.value.description || null,
+      type: form.value.type,
+      relatedTxId: form.value.type === 'expense' || form.value.type === 'income'
+        ? null
+        : form.value.relatedTxId,
     },
   });
   editing.value = null;
+}
+
+function openCreate() {
+  createForm.value = {
+    walletId: wallets.data.value?.[0]?.id ?? null,
+    amount: 0,
+    merchantDisplay: '',
+    description: '',
+    type: 'expense',
+    transactionDate: new Date().toISOString().slice(0, 16),
+    relatedTxId: null,
+  };
+  creating.value = true;
+}
+
+async function submitCreate() {
+  const f = createForm.value;
+  if (f.walletId == null || !f.merchantDisplay || f.amount <= 0) return;
+  await create.mutateAsync({
+    walletId: f.walletId,
+    amount: Number(f.amount),
+    type: f.type,
+    merchantDisplay: f.merchantDisplay,
+    description: f.description || null,
+    transactionDate: new Date(f.transactionDate).toISOString(),
+    relatedTxId: f.type === 'refund' || f.type === 'adjustment' ? f.relatedTxId : null,
+  });
+  creating.value = false;
 }
 
 function walletName(id: number | null): string {
@@ -62,13 +125,32 @@ function formatDate(iso: string): string {
     timeZone: 'Europe/Madrid',
   }).format(new Date(iso));
 }
+
+function signedAmount(tx: Transaction): string {
+  const meta = TYPE_META[tx.type];
+  const formatted = formatCents(tx.amount, tx.currency);
+  return meta.sign ? `${meta.sign}${formatted}` : formatted;
+}
+
+function amountClass(tx: Transaction): string {
+  if (tx.type === 'income' || tx.type === 'refund') return 'text-emerald-300';
+  return 'text-zinc-100';
+}
 </script>
 
 <template>
   <div class="space-y-6">
     <div class="flex items-center justify-between flex-wrap gap-4">
       <h1 class="text-2xl font-semibold tracking-tight">Transactions</h1>
-      <MonthNav v-model="month" />
+      <div class="flex items-center gap-3">
+        <MonthNav v-model="month" />
+        <button
+          class="px-3 py-1.5 rounded-md bg-emerald-500 text-zinc-950 text-sm font-medium hover:bg-emerald-400"
+          @click="openCreate"
+        >
+          + New
+        </button>
+      </div>
     </div>
 
     <div class="flex flex-wrap gap-3 text-sm">
@@ -98,6 +180,7 @@ function formatDate(iso: string): string {
           <tr>
             <th class="px-4 py-2 font-medium">Date</th>
             <th class="px-4 py-2 font-medium">Merchant</th>
+            <th class="px-4 py-2 font-medium">Type</th>
             <th class="px-4 py-2 font-medium">Wallet</th>
             <th class="px-4 py-2 font-medium">Status</th>
             <th class="px-4 py-2 font-medium text-right">Amount</th>
@@ -112,6 +195,11 @@ function formatDate(iso: string): string {
           >
             <td class="px-4 py-3 text-zinc-500 whitespace-nowrap">{{ formatDate(tx.transactionDate) }}</td>
             <td class="px-4 py-3 font-medium">{{ tx.merchantDisplay }}</td>
+            <td class="px-4 py-3">
+              <span class="px-2 py-0.5 rounded text-xs" :class="TYPE_META[tx.type].cls">
+                {{ TYPE_META[tx.type].label }}
+              </span>
+            </td>
             <td class="px-4 py-3 text-zinc-400">{{ walletName(tx.walletId) }}</td>
             <td class="px-4 py-3">
               <span
@@ -130,12 +218,15 @@ function formatDate(iso: string): string {
                 ignored
               </span>
             </td>
-            <td class="px-4 py-3 text-right tabular-nums font-semibold">
-              {{ formatCents(tx.amount, tx.currency) }}
+            <td
+              class="px-4 py-3 text-right tabular-nums font-semibold"
+              :class="amountClass(tx)"
+            >
+              {{ signedAmount(tx) }}
             </td>
           </tr>
           <tr v-if="!(txs.data.value ?? []).length">
-            <td colspan="5" class="px-4 py-8 text-center text-zinc-500">No transactions</td>
+            <td colspan="6" class="px-4 py-8 text-center text-zinc-500">No transactions</td>
           </tr>
         </tbody>
       </table>
@@ -143,6 +234,18 @@ function formatDate(iso: string): string {
 
     <Modal :open="!!editing" title="Edit transaction" @close="editing = null">
       <form class="space-y-4" @submit.prevent="save">
+        <label class="block text-sm">
+          <span class="text-zinc-400">Type</span>
+          <select
+            v-model="form.type"
+            class="mt-1 w-full rounded-md bg-zinc-900 border border-zinc-800 px-3 py-2"
+          >
+            <option value="expense">Expense</option>
+            <option value="income">Income</option>
+            <option value="refund">Refund</option>
+            <option value="adjustment">Adjustment</option>
+          </select>
+        </label>
         <label class="block text-sm">
           <span class="text-zinc-400">Wallet</span>
           <select
@@ -159,6 +262,17 @@ function formatDate(iso: string): string {
           <span class="text-zinc-400">Amount (cents)</span>
           <input
             v-model.number="form.amount"
+            type="number"
+            class="mt-1 w-full rounded-md bg-zinc-900 border border-zinc-800 px-3 py-2 tabular-nums"
+          />
+        </label>
+        <label
+          v-if="form.type === 'refund' || form.type === 'adjustment'"
+          class="block text-sm"
+        >
+          <span class="text-zinc-400">Related transaction ID (optional)</span>
+          <input
+            v-model.number="form.relatedTxId"
             type="number"
             class="mt-1 w-full rounded-md bg-zinc-900 border border-zinc-800 px-3 py-2 tabular-nums"
           />
@@ -183,6 +297,94 @@ function formatDate(iso: string): string {
             class="px-3 py-1.5 rounded-md bg-emerald-500 text-zinc-950 font-medium hover:bg-emerald-400"
           >
             Save
+          </button>
+        </div>
+      </form>
+    </Modal>
+
+    <Modal :open="creating" title="New transaction" @close="creating = false">
+      <form class="space-y-4" @submit.prevent="submitCreate">
+        <label class="block text-sm">
+          <span class="text-zinc-400">Type</span>
+          <select
+            v-model="createForm.type"
+            class="mt-1 w-full rounded-md bg-zinc-900 border border-zinc-800 px-3 py-2"
+          >
+            <option value="expense">Expense</option>
+            <option value="income">Income</option>
+            <option value="refund">Refund</option>
+            <option value="adjustment">Adjustment</option>
+          </select>
+        </label>
+        <label class="block text-sm">
+          <span class="text-zinc-400">Wallet</span>
+          <select
+            v-model.number="createForm.walletId"
+            class="mt-1 w-full rounded-md bg-zinc-900 border border-zinc-800 px-3 py-2"
+          >
+            <option :value="null">—</option>
+            <option v-for="w in wallets.data.value ?? []" :key="w.id" :value="w.id">
+              {{ w.icon }} {{ w.name }}
+            </option>
+          </select>
+        </label>
+        <label class="block text-sm">
+          <span class="text-zinc-400">Merchant / source</span>
+          <input
+            v-model="createForm.merchantDisplay"
+            required
+            class="mt-1 w-full rounded-md bg-zinc-900 border border-zinc-800 px-3 py-2"
+          />
+        </label>
+        <label class="block text-sm">
+          <span class="text-zinc-400">Amount (cents)</span>
+          <input
+            v-model.number="createForm.amount"
+            type="number"
+            min="1"
+            required
+            class="mt-1 w-full rounded-md bg-zinc-900 border border-zinc-800 px-3 py-2 tabular-nums"
+          />
+        </label>
+        <label class="block text-sm">
+          <span class="text-zinc-400">Date</span>
+          <input
+            v-model="createForm.transactionDate"
+            type="datetime-local"
+            class="mt-1 w-full rounded-md bg-zinc-900 border border-zinc-800 px-3 py-2"
+          />
+        </label>
+        <label
+          v-if="createForm.type === 'refund' || createForm.type === 'adjustment'"
+          class="block text-sm"
+        >
+          <span class="text-zinc-400">Related transaction ID (optional)</span>
+          <input
+            v-model.number="createForm.relatedTxId"
+            type="number"
+            class="mt-1 w-full rounded-md bg-zinc-900 border border-zinc-800 px-3 py-2 tabular-nums"
+          />
+        </label>
+        <label class="block text-sm">
+          <span class="text-zinc-400">Description</span>
+          <input
+            v-model="createForm.description"
+            class="mt-1 w-full rounded-md bg-zinc-900 border border-zinc-800 px-3 py-2"
+          />
+        </label>
+        <div class="flex justify-end gap-2 pt-2">
+          <button
+            type="button"
+            class="px-3 py-1.5 rounded-md border border-zinc-800 hover:bg-zinc-900"
+            @click="creating = false"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            class="px-3 py-1.5 rounded-md bg-emerald-500 text-zinc-950 font-medium hover:bg-emerald-400"
+          >
+            Create
           </button>
         </div>
       </form>

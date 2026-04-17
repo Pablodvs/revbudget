@@ -9,12 +9,20 @@ type MonthlyStats = {
   month: string;
   totalSpent: number;
   totalBudget: number;
+  totalIncome: number;
   transactionCount: number;
   perWallet: Array<{
     walletId: number;
     spent: number;
+    income: number;
     transactionCount: number;
   }>;
+};
+
+type Trends = {
+  months: string[];
+  series: Array<{ walletId: number; values: number[] }>;
+  topMerchants: Array<{ merchantDisplay: string; total: number; count: number }>;
 };
 
 const { app } = await import('../app');
@@ -32,7 +40,13 @@ beforeEach(async () => {
   await truncateAll();
 });
 
-async function addTx(walletId: number, amount: number, transactionDate: string, merchant = 'tst') {
+async function addTx(
+  walletId: number,
+  amount: number,
+  transactionDate: string,
+  merchant = 'tst',
+  type: 'expense' | 'income' | 'refund' | 'adjustment' = 'expense',
+) {
   await db.insert(transactions).values({
     walletId,
     amount,
@@ -41,6 +55,7 @@ async function addTx(walletId: number, amount: number, transactionDate: string, 
     merchantDisplay: merchant.toUpperCase(),
     rawText: `seed ${merchant}`,
     status: 'classified',
+    type,
     classifiedAt: transactionDate,
     transactionDate,
   });
@@ -85,6 +100,53 @@ describe('GET /api/stats/monthly', () => {
     expect(body.transactionCount).toBe(1);
   });
 
+  test('applies type formula: expense + adjustment - refund, income separate', async () => {
+    const w = await seedWallet({ name: 'Food', budget: 10000 });
+
+    await addTx(w.id, 10000, '2026-03-05T12:00:00Z', 'shop', 'expense');
+    await addTx(w.id, 1000, '2026-03-06T12:00:00Z', 'shop', 'adjustment');
+    await addTx(w.id, 3000, '2026-03-07T12:00:00Z', 'shop', 'refund');
+    await addTx(w.id, 5000, '2026-03-08T12:00:00Z', 'boss', 'income');
+
+    const res = await app.request('/api/stats/monthly?month=2026-03', { headers: AUTH });
+    const body = (await res.json()) as MonthlyStats;
+
+    // 10000 + 1000 - 3000 = 8000
+    expect(body.totalSpent).toBe(8000);
+    expect(body.totalIncome).toBe(5000);
+    expect(body.transactionCount).toBe(4);
+
+    const entry = body.perWallet.find((p) => p.walletId === w.id);
+    expect(entry?.spent).toBe(8000);
+    expect(entry?.income).toBe(5000);
+    expect(entry?.transactionCount).toBe(4);
+  });
+
+  test('income only: spent stays 0, income reported', async () => {
+    const w = await seedWallet({ name: 'Salary', budget: 0 });
+    await addTx(w.id, 200000, '2026-03-25T10:00:00Z', 'payroll', 'income');
+
+    const res = await app.request('/api/stats/monthly?month=2026-03', { headers: AUTH });
+    const body = (await res.json()) as MonthlyStats;
+    expect(body.totalSpent).toBe(0);
+    expect(body.totalIncome).toBe(200000);
+    const entry = body.perWallet.find((p) => p.walletId === w.id);
+    expect(entry?.spent).toBe(0);
+    expect(entry?.income).toBe(200000);
+  });
+
+  test('refunds greater than expenses produce negative spent', async () => {
+    const w = await seedWallet({ name: 'Food' });
+    await addTx(w.id, 500, '2026-03-05T12:00:00Z', 'a', 'expense');
+    await addTx(w.id, 2000, '2026-03-06T12:00:00Z', 'a', 'refund');
+
+    const res = await app.request('/api/stats/monthly?month=2026-03', { headers: AUTH });
+    const body = (await res.json()) as MonthlyStats;
+    expect(body.totalSpent).toBe(-1500);
+    const entry = body.perWallet.find((p) => p.walletId === w.id);
+    expect(entry?.spent).toBe(-1500);
+  });
+
   test('TZ boundary: midnight Madrid on 1st falls in correct local month', async () => {
     const w = await seedWallet({ name: 'Food' });
     // 2026-05-01T00:30 in Europe/Madrid is 2026-04-30T22:30Z.
@@ -98,6 +160,46 @@ describe('GET /api/stats/monthly', () => {
     const resApr = await app.request('/api/stats/monthly?month=2026-04', { headers: AUTH });
     const aprBody = (await resApr.json()) as MonthlyStats;
     expect(aprBody.totalSpent).toBe(0);
+  });
+});
+
+describe('GET /api/stats/trends', () => {
+  test('series apply formula and exclude income; topMerchants only expense+adjustment', async () => {
+    const w = await seedWallet({ name: 'Food', budget: 10000 });
+
+    // Use current month to land inside the trailing 6-month window.
+    const now = new Date();
+    const y = now.getUTCFullYear();
+    const m = String(now.getUTCMonth() + 1).padStart(2, '0');
+    const day = (d: number) => `${y}-${m}-${String(d).padStart(2, '0')}T12:00:00Z`;
+
+    await addTx(w.id, 10000, day(5), 'shop', 'expense');
+    await addTx(w.id, 1000, day(6), 'shop', 'adjustment');
+    await addTx(w.id, 3000, day(7), 'shop', 'refund');
+    await addTx(w.id, 5000, day(8), 'boss', 'income');
+    await addTx(w.id, 2000, day(9), 'market', 'expense');
+
+    const res = await app.request('/api/stats/trends', { headers: AUTH });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Trends;
+
+    const series = body.series.find((s) => s.walletId === w.id);
+    expect(series).toBeDefined();
+    // 10000 + 1000 - 3000 + 2000 = 10000 (income excluded)
+    const last = series?.values.at(-1);
+    expect(last).toBe(10000);
+
+    // topMerchants: shop (10000 expense + 1000 adjustment = 11000) and market (2000).
+    // "boss" (income) and the refund row must not appear as their own entries.
+    const names = body.topMerchants.map((m) => m.merchantDisplay);
+    expect(names).toContain('SHOP');
+    expect(names).toContain('MARKET');
+    expect(names).not.toContain('BOSS');
+
+    const shop = body.topMerchants.find((m) => m.merchantDisplay === 'SHOP');
+    // sum uses raw amount (expense+adjustment), no refund subtraction on this listing
+    expect(shop?.total).toBe(11000);
+    expect(shop?.count).toBe(2);
   });
 });
 

@@ -82,6 +82,7 @@ export const webhookRoute = new Hono<{ Variables: Variables }>()
           merchantDisplay: parsed.value.merchantDisplay,
           rawText: body.text,
           status: 'classified',
+          type: 'expense',
           classifiedAt: now,
           transactionDate: parsed.value.transactionDate,
         })
@@ -114,6 +115,7 @@ export const webhookRoute = new Hono<{ Variables: Variables }>()
         merchantDisplay: parsed.value.merchantDisplay,
         rawText: body.text,
         status: 'pending',
+        type: 'expense',
         transactionDate: parsed.value.transactionDate,
       })
       .returning();

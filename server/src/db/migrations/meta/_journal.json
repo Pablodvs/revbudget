@@ -15,6 +15,13 @@
       "when": 1776196224241,
       "tag": "0001_certain_adam_destine",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1776297074936,
+      "tag": "0002_sour_vampiro",
+      "breakpoints": true
     }
   ]
 }

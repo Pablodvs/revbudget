@@ -40,6 +40,12 @@ const recent = useTransactions(() => ({ limit: 5, month: month.value }));
           of {{ stats.data.value ? formatCents(stats.data.value.totalBudget, 'EUR') : '—' }} budget
           · {{ stats.data.value?.transactionCount ?? 0 }} transactions
         </div>
+        <div
+          v-if="stats.data.value && stats.data.value.totalIncome > 0"
+          class="mt-1 text-sm text-emerald-300 tabular-nums"
+        >
+          Income +{{ formatCents(stats.data.value.totalIncome, 'EUR') }}
+        </div>
       </div>
       <div class="w-72">
         <ProgressBar

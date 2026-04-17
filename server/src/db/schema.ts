@@ -1,8 +1,11 @@
+import { type AnySQLiteColumn, check, index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
-import { check, index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 export const PARSE_FAILURE_ERROR_CODES = ['empty', 'no_match', 'invalid_amount'] as const;
 export type ParseFailureErrorCode = (typeof PARSE_FAILURE_ERROR_CODES)[number];
+
+export const TRANSACTION_TYPES = ['expense', 'income', 'refund', 'adjustment'] as const;
+export type TransactionTypeCode = (typeof TRANSACTION_TYPES)[number];
 
 export const wallets = sqliteTable('wallets', {
   id: integer('id').primaryKey({ autoIncrement: true }),
@@ -33,6 +36,10 @@ export const transactions = sqliteTable(
     telegramMessageId: integer('telegram_message_id'),
     classifiedAt: text('classified_at'),
     transactionDate: text('transaction_date').notNull(),
+    type: text('type', { enum: TRANSACTION_TYPES }).notNull().default('expense'),
+    relatedTxId: integer('related_tx_id').references((): AnySQLiteColumn => transactions.id, {
+      onDelete: 'set null',
+    }),
     createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
     updatedAt: text('updated_at').notNull().default(sql`CURRENT_TIMESTAMP`),
   },
@@ -40,8 +47,10 @@ export const transactions = sqliteTable(
     statusIdx: index('idx_tx_status').on(t.status),
     walletIdx: index('idx_tx_wallet').on(t.walletId),
     dateIdx: index('idx_tx_date').on(t.transactionDate),
+    typeIdx: index('idx_tx_type').on(t.type),
     statusCheck: check('status_check', sql`${t.status} IN ('pending','classified','ignored')`),
     amountCheck: check('amount_positive', sql`${t.amount} > 0`),
+    typeCheck: check('type_check', sql`${t.type} IN ('expense','income','refund','adjustment')`),
   }),
 );
 

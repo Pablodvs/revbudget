@@ -4,6 +4,9 @@ import { MIN_CONTAINS_PATTERN_LENGTH, normalizePattern } from './normalize';
 export const TransactionStatus = z.enum(['pending', 'classified', 'ignored']);
 export type TransactionStatus = z.infer<typeof TransactionStatus>;
 
+export const TransactionType = z.enum(['expense', 'income', 'refund', 'adjustment']);
+export type TransactionType = z.infer<typeof TransactionType>;
+
 export const MatchType = z.enum(['exact', 'contains']);
 export type MatchType = z.infer<typeof MatchType>;
 
@@ -51,6 +54,8 @@ export const TransactionSchema = z.object({
   description: z.string().nullable(),
   rawText: z.string(),
   status: TransactionStatus,
+  type: TransactionType,
+  relatedTxId: Id.nullable(),
   telegramMessageId: z.number().int().nullable(),
   classifiedAt: z.string().nullable(),
   transactionDate: z.string(),
@@ -59,18 +64,53 @@ export const TransactionSchema = z.object({
 });
 export type Transaction = z.infer<typeof TransactionSchema>;
 
-export const TransactionUpdateSchema = z.object({
-  walletId: Id.nullable().optional(),
-  amount: PositiveAmount.optional(),
-  description: z.string().max(256).nullable().optional(),
-  status: TransactionStatus.optional(),
-});
+export const TransactionUpdateSchema = z
+  .object({
+    walletId: Id.nullable().optional(),
+    amount: PositiveAmount.optional(),
+    description: z.string().max(256).nullable().optional(),
+    status: TransactionStatus.optional(),
+    type: TransactionType.optional(),
+    relatedTxId: Id.nullable().optional(),
+  })
+  .superRefine((val, ctx) => {
+    if (val.type === 'adjustment' && val.relatedTxId === null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['relatedTxId'],
+        message: 'adjustment requires relatedTxId',
+      });
+    }
+  });
 export type TransactionUpdate = z.infer<typeof TransactionUpdateSchema>;
+
+export const TransactionCreateSchema = z
+  .object({
+    walletId: Id,
+    amount: PositiveAmount,
+    type: TransactionType,
+    merchantDisplay: z.string().min(1).max(128),
+    description: z.string().max(256).nullable().optional(),
+    transactionDate: z.string().datetime(),
+    currency: z.string().length(3).optional(),
+    relatedTxId: Id.nullable().optional(),
+  })
+  .superRefine((val, ctx) => {
+    if (val.type === 'adjustment' && val.relatedTxId == null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['relatedTxId'],
+        message: 'adjustment requires relatedTxId',
+      });
+    }
+  });
+export type TransactionCreate = z.infer<typeof TransactionCreateSchema>;
 
 export const TransactionQuerySchema = z.object({
   month: MonthString.optional(),
   walletId: z.coerce.number().int().positive().optional(),
   status: TransactionStatus.optional(),
+  type: TransactionType.optional(),
   limit: z.coerce.number().int().positive().max(500).optional(),
   offset: z.coerce.number().int().nonnegative().optional(),
 });
@@ -154,6 +194,7 @@ export const MonthlyStatsSchema = z.object({
   month: MonthString,
   totalSpent: z.number().int().nonnegative(),
   totalBudget: z.number().int().nonnegative(),
+  totalIncome: PositiveIntCents,
   transactionCount: z.number().int().nonnegative(),
   perWallet: z.array(
     z.object({
@@ -162,7 +203,8 @@ export const MonthlyStatsSchema = z.object({
       color: HexColor,
       icon: z.string().nullable(),
       budget: PositiveIntCents,
-      spent: PositiveIntCents,
+      spent: z.number().int(),
+      income: PositiveIntCents,
       transactionCount: z.number().int().nonnegative(),
     }),
   ),

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query';
-import type { Transaction, TransactionUpdate } from 'shared';
+import type { Transaction, TransactionCreate, TransactionUpdate } from 'shared';
 import type { MaybeRefOrGetter } from 'vue';
 import { computed, toValue } from 'vue';
 import { api } from '../lib/api';
@@ -43,7 +43,24 @@ export function useUpdateTransaction() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['transactions'] });
       qc.invalidateQueries({ queryKey: ['stats'] });
+      qc.invalidateQueries({ queryKey: ['trends'] });
       qc.invalidateQueries({ queryKey: ['rules'] });
+    },
+  });
+}
+
+export function useCreateTransaction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: TransactionCreate) => {
+      const res = await api.api.transactions.$post({ json: body });
+      if (!res.ok) throw new Error('create failed');
+      return (await res.json()) as Transaction;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['transactions'] });
+      qc.invalidateQueries({ queryKey: ['stats'] });
+      qc.invalidateQueries({ queryKey: ['trends'] });
     },
   });
 }
@@ -59,6 +76,7 @@ export function useDeleteTransaction() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['transactions'] });
       qc.invalidateQueries({ queryKey: ['stats'] });
+      qc.invalidateQueries({ queryKey: ['trends'] });
     },
   });
 }

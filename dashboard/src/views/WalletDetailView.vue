@@ -26,6 +26,16 @@ const update = useUpdateWallet();
 const spent = computed(() =>
   (txs.data.value ?? [])
     .filter((t) => t.status === 'classified')
+    .reduce((acc, t) => {
+      if (t.type === 'expense' || t.type === 'adjustment') return acc + t.amount;
+      if (t.type === 'refund') return acc - t.amount;
+      return acc;
+    }, 0),
+);
+
+const income = computed(() =>
+  (txs.data.value ?? [])
+    .filter((t) => t.status === 'classified' && t.type === 'income')
     .reduce((acc, t) => acc + t.amount, 0),
 );
 
@@ -37,8 +47,11 @@ const cumulative = computed(() => {
   const totalDays = Math.max(1, Math.round((end - start) / 86400000));
   const daily: number[] = new Array(totalDays + 1).fill(0);
   const sorted = (txs.data.value ?? [])
-    .filter((t) => t.status === 'classified')
-    .map((t) => ({ t: new Date(t.transactionDate).getTime(), a: t.amount }))
+    .filter((t) => t.status === 'classified' && t.type !== 'income')
+    .map((t) => ({
+      t: new Date(t.transactionDate).getTime(),
+      a: t.type === 'refund' ? -t.amount : t.amount,
+    }))
     .sort((x, y) => x.t - y.t);
   let running = 0;
   let idx = 0;
@@ -130,7 +143,13 @@ async function saveEdit() {
             {{ formatCents(wallet.data.value.budget, wallet.data.value.currency) }}</span>
         </span>
       </div>
-      <ProgressBar :spent="spent" :budget="wallet.data.value.budget" />
+      <ProgressBar :spent="Math.max(0, spent)" :budget="wallet.data.value.budget" />
+      <div v-if="income > 0" class="mt-3 flex justify-between text-sm">
+        <span class="text-zinc-500">Income</span>
+        <span class="tabular-nums font-semibold text-emerald-300">
+          +{{ formatCents(income, wallet.data.value.currency) }}
+        </span>
+      </div>
     </section>
 
     <section class="rounded-xl border border-zinc-800 bg-zinc-950 p-6">
