@@ -1,4 +1,7 @@
+export type TransactionType = 'expense' | 'income' | 'refund';
+
 export type ParsedNotification = {
+  type: TransactionType;
   amount: number;
   currency: string;
   merchant: string;
@@ -21,40 +24,80 @@ const CURRENCY_SYMBOLS: Record<string, string> = {
   '£': 'GBP',
 };
 
-const AMOUNT = String.raw`(\d{1,3}(?:[.\u00A0 ]\d{3})*(?:,\d{1,2})|\d+(?:,\d{1,2})?)`;
-const CURR = String.raw`(€|\$|£|EUR|USD|GBP)`;
+const AMOUNT = String.raw`(?:\d{1,3}(?:[,\u00A0 ]\d{3})*(?:\.\d{1,2})|\d+(?:\.\d{1,2})?)`;
+const CURR = String.raw`(?:€|\$|£|EUR|USD|GBP)`;
 const SPACE = String.raw`[\s\u00A0]+`;
+// Amount ↔ currency boundary: Revolut sometimes glues them ("£11.20")
+// and sometimes separates them ("£ 11.20"), so accept zero-or-more whitespace.
+const AC_SEP = String.raw`[\s\u00A0]*`;
+// Consume any leading run of emoji / punctuation / whitespace so the next
+// anchor lands on the trigger word or merchant name. Excludes digits so
+// merchant names starting with a digit (e.g. "3M") are preserved in
+// merchant-first matchers like "X sent you …".
+const EMOJI_PREFIX = String.raw`(?:[^\p{L}\p{N}]*)`;
 
 type Matcher = {
   name: string;
+  type: TransactionType;
   regex: RegExp;
-  extract: (m: RegExpMatchArray) => { raw: string; currency: string; merchant: string };
 };
 
 const MATCHERS: Matcher[] = [
   {
-    name: 'pagaste-con-tarjeta',
+    name: 'en-paid-at',
+    type: 'expense',
     regex: new RegExp(
-      `^(?:[\\p{Emoji}\\s]*)?Pagaste${SPACE}${AMOUNT}${SPACE}${CURR}${SPACE}con\\s+tu\\s+tarjeta\\s+en${SPACE}(.+?)$`,
+      `^${EMOJI_PREFIX}(?:You\\s+)?paid${SPACE}(?<cur>${CURR})${AC_SEP}(?<amt>${AMOUNT})${SPACE}at${SPACE}(?<merch>.+?)$`,
       'iu',
     ),
-    extract: (m) => ({ raw: m[1] ?? '', currency: m[2] ?? '', merchant: m[3] ?? '' }),
   },
   {
-    name: 'pagaste-en',
+    name: 'en-you-received-from',
+    type: 'income',
     regex: new RegExp(
-      `^(?:[\\p{Emoji}\\s]*)?Pagaste${SPACE}${AMOUNT}${SPACE}${CURR}${SPACE}en${SPACE}(.+?)$`,
+      `^${EMOJI_PREFIX}You\\s+received${SPACE}(?<cur>${CURR})${AC_SEP}(?<amt>${AMOUNT})${SPACE}from${SPACE}(?<merch>.+?)$`,
       'iu',
     ),
-    extract: (m) => ({ raw: m[1] ?? '', currency: m[2] ?? '', merchant: m[3] ?? '' }),
   },
   {
-    name: 'enviaste-a',
+    name: 'en-received-from',
+    type: 'income',
     regex: new RegExp(
-      `^(?:[\\p{Emoji}\\s]*)?Enviaste${SPACE}${AMOUNT}${SPACE}${CURR}${SPACE}a${SPACE}(.+?)$`,
+      `^${EMOJI_PREFIX}Received${SPACE}(?<cur>${CURR})${AC_SEP}(?<amt>${AMOUNT})${SPACE}from${SPACE}(?<merch>.+?)$`,
       'iu',
     ),
-    extract: (m) => ({ raw: m[1] ?? '', currency: m[2] ?? '', merchant: m[3] ?? '' }),
+  },
+  {
+    name: 'en-sender-sent-you',
+    type: 'income',
+    regex: new RegExp(
+      `^${EMOJI_PREFIX}(?<merch>.+?)\\s+sent\\s+you${SPACE}(?<cur>${CURR})${AC_SEP}(?<amt>${AMOUNT})$`,
+      'iu',
+    ),
+  },
+  {
+    name: 'en-you-were-refunded-by',
+    type: 'refund',
+    regex: new RegExp(
+      `^${EMOJI_PREFIX}You\\s+were\\s+refunded${SPACE}(?<cur>${CURR})${AC_SEP}(?<amt>${AMOUNT})${SPACE}by${SPACE}(?<merch>.+?)$`,
+      'iu',
+    ),
+  },
+  {
+    name: 'en-refund-of-from',
+    type: 'refund',
+    regex: new RegExp(
+      `^${EMOJI_PREFIX}Refund\\s+of${SPACE}(?<cur>${CURR})${AC_SEP}(?<amt>${AMOUNT})${SPACE}from${SPACE}(?<merch>.+?)$`,
+      'iu',
+    ),
+  },
+  {
+    name: 'en-merchant-refunded-you',
+    type: 'refund',
+    regex: new RegExp(
+      `^${EMOJI_PREFIX}(?<merch>.+?)\\s+refunded\\s+you${SPACE}(?<cur>${CURR})${AC_SEP}(?<amt>${AMOUNT})$`,
+      'iu',
+    ),
   },
 ];
 
@@ -63,8 +106,8 @@ function normalizeMerchant(s: string): string {
 }
 
 function parseAmountToCents(raw: string): number | null {
-  const cleaned = raw.replace(/[.\u00A0 ]/g, '');
-  const match = /^(\d+)(?:,(\d{1,2}))?$/.exec(cleaned);
+  const stripped = raw.replace(/[\u00A0 ]/g, '').split(',').join('');
+  const match = /^(\d+)(?:\.(\d{1,2}))?$/.exec(stripped);
   if (!match) return null;
   const whole = Number(match[1]);
   const fracRaw = match[2] ?? '';
@@ -81,29 +124,53 @@ function resolveCurrency(token: string): string {
   return CURRENCY_SYMBOLS[token] ?? upper;
 }
 
+const BALANCE_LINE =
+  /^(?:(?:Available|Current|Remaining)\s+(?:credit|balance)|Credit\s+(?:available|remaining)|Balance(?:\s+available)?)\b/i;
+const TITLE_PREFIX = /^[^:\n]{1,60}:\s+/;
+const CURRENCY_PARENTHETICAL = /\s*\([^)]*(?:€|\$|£|EUR|USD|GBP)[^)]*\)\s*/giu;
+const TRAILING_CARD = /\s+with\s+(?:your\s+|my\s+)?card(?:\s+\S+)*\s*$/i;
+
+function preprocess(input: string): string {
+  const kept = input
+    .split(/\r?\n/)
+    .filter((line) => !BALANCE_LINE.test(line.trim()))
+    .join(' ');
+  let text = kept.replace(/\s+/g, ' ').trim();
+  text = text.replace(TITLE_PREFIX, '');
+  text = text.replace(CURRENCY_PARENTHETICAL, ' ').replace(/\s+/g, ' ').trim();
+  text = text.replace(TRAILING_CARD, '').trim();
+  return text;
+}
+
 export function parseNotification(input: string, receivedAt?: Date): ParseResult {
   const text = input?.trim();
   if (!text) {
     return { ok: false, error: { code: 'empty', message: 'empty notification' } };
   }
-  const single = text.replace(/\s+/g, ' ').trim();
+  const single = preprocess(text);
+  if (!single) {
+    return { ok: false, error: { code: 'empty', message: 'empty notification' } };
+  }
   for (const matcher of MATCHERS) {
     const m = matcher.regex.exec(single);
-    if (!m) continue;
-    const { raw, currency, merchant } = matcher.extract(m);
-    const amount = parseAmountToCents(raw);
+    if (!m || !m.groups) continue;
+    const rawAmt = m.groups.amt ?? '';
+    const curToken = m.groups.cur ?? '';
+    const merchant = m.groups.merch ?? '';
+    const amount = parseAmountToCents(rawAmt);
     if (amount === null || amount <= 0) {
       return {
         ok: false,
-        error: { code: 'invalid_amount', message: `could not parse amount: ${raw}` },
+        error: { code: 'invalid_amount', message: `could not parse amount: ${rawAmt}` },
       };
     }
     const merchantDisplay = merchant.trim();
     return {
       ok: true,
       value: {
+        type: matcher.type,
         amount,
-        currency: resolveCurrency(currency),
+        currency: resolveCurrency(curToken),
         merchant: normalizeMerchant(merchantDisplay),
         merchantDisplay,
         transactionDate: (receivedAt ?? new Date()).toISOString(),

@@ -8,8 +8,10 @@ import { getClientIp } from '../lib/client-ip';
 import { log } from '../lib/log';
 import { rateLimit } from '../middleware/rate-limit';
 import { webhookSecret } from '../middleware/webhook-secret';
+import { config } from '../config';
 import { classifyMerchant } from '../services/classifier';
 import { parseNotification } from '../services/notification-parser';
+import { normalizeWithOllama } from '../services/ollama-normalizer';
 import { sendClassifyPrompt, sendConfirmation, sendParseFailedPrompt } from '../services/telegram';
 
 type Variables = { requestId: string };
@@ -28,7 +30,15 @@ export const webhookRoute = new Hono<{ Variables: Variables }>()
     const rid = c.get('requestId') ?? 'unknown';
     const body = c.req.valid('json');
     const receivedAt = body.receivedAt ? new Date(body.receivedAt) : new Date();
-    const parsed = parseNotification(body.text, receivedAt);
+    let parsed = parseNotification(body.text, receivedAt);
+
+    if (!parsed.ok && config.OLLAMA_ENABLED) {
+      const rescue = await normalizeWithOllama(body.text, rid, receivedAt);
+      if (rescue) {
+        log.info(rid, 'webhook_ollama_rescued', { canonical: rescue.canonical });
+        parsed = { ok: true, value: rescue.parsed };
+      }
+    }
 
     if (!parsed.ok) {
       const [inserted] = await db
@@ -82,7 +92,7 @@ export const webhookRoute = new Hono<{ Variables: Variables }>()
           merchantDisplay: parsed.value.merchantDisplay,
           rawText: body.text,
           status: 'classified',
-          type: 'expense',
+          type: parsed.value.type,
           classifiedAt: now,
           transactionDate: parsed.value.transactionDate,
         })
@@ -115,7 +125,7 @@ export const webhookRoute = new Hono<{ Variables: Variables }>()
         merchantDisplay: parsed.value.merchantDisplay,
         rawText: body.text,
         status: 'pending',
-        type: 'expense',
+        type: parsed.value.type,
         transactionDate: parsed.value.transactionDate,
       })
       .returning();

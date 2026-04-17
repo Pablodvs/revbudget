@@ -14,6 +14,13 @@ const EnvSchema = z.object({
   DASHBOARD_ORIGIN: z.string().url().default('http://localhost:5173'),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   APP_TIMEZONE: z.string().default('Europe/Madrid'),
+  OLLAMA_ENABLED: z
+    .union([z.boolean(), z.string()])
+    .default(true)
+    .transform((v) => (typeof v === 'boolean' ? v : v === 'true' || v === '1')),
+  OLLAMA_URL: z.string().url().default('http://localhost:11434'),
+  OLLAMA_MODEL: z.string().default('qwen2.5:3b'),
+  OLLAMA_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
 });
 
 export type AppConfig = z.infer<typeof EnvSchema>;

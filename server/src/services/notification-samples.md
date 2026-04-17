@@ -11,14 +11,14 @@ Rules:
 
 ---
 
-## 1. Expenses (`expense`) — CURRENTLY SUPPORTED (Spanish only)
+## 1. Expenses (`expense`) — CURRENTLY SUPPORTED
 
 Reference of what `notification-parser.ts` parses today:
 
 ```
-Pagaste 12,34 € con tu tarjeta en MERCADONA
-Pagaste 12,34 € en AMAZON
-Enviaste 50,00 € a Juan Pérez
+You paid €12.34 at MERCADONA
+Paid £11.20 at Smith & Sons
+Paid £5.00 at Tesco with card
 ```
 
 ### 1.1 Card payment (in-store / online)
@@ -101,4 +101,4 @@ adjusted currency conversion, preliminary authorisation different from final cha
   `server/src/services/notification-parser.ts` with the matching `type`.
 - If an income/refund cannot be automatically linked to an original transaction,
   `relatedTxId` will stay null and can be associated manually from the dashboard.
-- The current regex uses the helpers `AMOUNT`, `CURR`, `SPACE` — reuse them for consistency.
+- The current regex uses the helpers `AMOUNT`, `CURR`, `SPACE`, `AC_SEP` — reuse them for consistency.
