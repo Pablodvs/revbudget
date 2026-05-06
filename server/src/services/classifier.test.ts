@@ -101,10 +101,12 @@ describe('upsertExactRule / deleteRuleByPattern', () => {
     await upsertExactRule('netflix', a.id);
     const first = await classifyMerchant('netflix');
     expect(first.walletId).toBe(a.id);
+    expect(first.requireConfirmation).toBe(false);
 
     await upsertExactRule('netflix', b.id);
     const second = await classifyMerchant('netflix');
     expect(second.walletId).toBe(b.id);
+    expect(second.requireConfirmation).toBe(false);
   });
 
   test('deleteRuleByPattern removes classification', async () => {

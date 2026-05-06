@@ -1,5 +1,13 @@
-import { type AnySQLiteColumn, check, index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
+import {
+  type AnySQLiteColumn,
+  check,
+  index,
+  integer,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from 'drizzle-orm/sqlite-core';
 
 export const PARSE_FAILURE_ERROR_CODES = ['empty', 'no_match', 'invalid_amount'] as const;
 export type ParseFailureErrorCode = (typeof PARSE_FAILURE_ERROR_CODES)[number];
@@ -30,7 +38,7 @@ export const transactions = sqliteTable(
     merchantDisplay: text('merchant_display').notNull(),
     description: text('description'),
     rawText: text('raw_text').notNull(),
-    status: text('status', { enum: ['pending', 'classified', 'ignored'] })
+    status: text('status', { enum: ['pending', 'pending_confirmation', 'classified', 'ignored'] })
       .notNull()
       .default('pending'),
     telegramMessageId: integer('telegram_message_id'),
@@ -48,7 +56,10 @@ export const transactions = sqliteTable(
     walletIdx: index('idx_tx_wallet').on(t.walletId),
     dateIdx: index('idx_tx_date').on(t.transactionDate),
     typeIdx: index('idx_tx_type').on(t.type),
-    statusCheck: check('status_check', sql`${t.status} IN ('pending','classified','ignored')`),
+    statusCheck: check(
+      'status_check',
+      sql`${t.status} IN ('pending','pending_confirmation','classified','ignored')`,
+    ),
     amountCheck: check('amount_positive', sql`${t.amount} > 0`),
     typeCheck: check('type_check', sql`${t.type} IN ('expense','income','refund','adjustment')`),
   }),
@@ -85,6 +96,9 @@ export const merchantRules = sqliteTable(
     matchType: text('match_type', { enum: ['exact', 'contains'] })
       .notNull()
       .default('exact'),
+    requireConfirmation: integer('require_confirmation', { mode: 'boolean' })
+      .notNull()
+      .default(true),
     createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
     updatedAt: text('updated_at').notNull().default(sql`CURRENT_TIMESTAMP`),
   },

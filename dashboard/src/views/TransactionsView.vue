@@ -169,6 +169,7 @@ function amountClass(tx: Transaction): string {
       >
         <option :value="null">All statuses</option>
         <option value="pending">Pending</option>
+        <option value="pending_confirmation">Awaiting confirm</option>
         <option value="classified">Classified</option>
         <option value="ignored">Ignored</option>
       </select>
@@ -207,6 +208,12 @@ function amountClass(tx: Transaction): string {
                 class="px-2 py-0.5 rounded bg-amber-400/10 text-amber-300 text-xs"
               >
                 pending
+              </span>
+              <span
+                v-else-if="tx.status === 'pending_confirmation'"
+                class="px-2 py-0.5 rounded bg-sky-400/10 text-sky-300 text-xs"
+              >
+                awaiting confirm
               </span>
               <span
                 v-else-if="tx.status === 'classified'"

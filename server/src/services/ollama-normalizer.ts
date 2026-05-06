@@ -13,6 +13,7 @@ Examples:
 "🛍 Paid £11.20 (€12.94) at Smith & Sons\\nAvailable credit: €2,000.00" -> {"type":"expense","amount":11.20,"currency":"GBP","merchant":"Smith & Sons"}
 "ACME Corp sent you 40.00 EUR" -> {"type":"income","amount":40,"currency":"EUR","merchant":"ACME Corp"}
 "You were refunded €5.00 by ZARA" -> {"type":"refund","amount":5,"currency":"EUR","merchant":"ZARA"}
+"Refund arrived 🎉: You've received a payment refund of €21 from IKEA" -> {"type":"refund","amount":21,"currency":"EUR","merchant":"IKEA"}
 "Your Revolut trial ends soon" -> {"type":"none","amount":0,"currency":"EUR","merchant":""}
 Output ONLY the JSON object. No explanation.`;
 

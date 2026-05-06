@@ -13,16 +13,31 @@ const remove = useDeleteRule();
 
 const modalOpen = ref(false);
 const editing = ref<MerchantRule | null>(null);
-const form = ref({ pattern: '', walletId: 0, matchType: 'exact' as 'exact' | 'contains' });
+const form = ref({
+  pattern: '',
+  walletId: 0,
+  matchType: 'exact' as 'exact' | 'contains',
+  requireConfirmation: true,
+});
 
 function openNew() {
   editing.value = null;
-  form.value = { pattern: '', walletId: wallets.data.value?.[0]?.id ?? 0, matchType: 'exact' };
+  form.value = {
+    pattern: '',
+    walletId: wallets.data.value?.[0]?.id ?? 0,
+    matchType: 'exact',
+    requireConfirmation: true,
+  };
   modalOpen.value = true;
 }
 function openEdit(r: MerchantRule) {
   editing.value = r;
-  form.value = { pattern: r.pattern, walletId: r.walletId, matchType: r.matchType };
+  form.value = {
+    pattern: r.pattern,
+    walletId: r.walletId,
+    matchType: r.matchType,
+    requireConfirmation: r.requireConfirmation,
+  };
   modalOpen.value = true;
 }
 async function save() {
@@ -34,6 +49,7 @@ async function save() {
         pattern: form.value.pattern,
         walletId: form.value.walletId,
         matchType: form.value.matchType,
+        requireConfirmation: form.value.requireConfirmation,
       },
     });
   } else {
@@ -41,6 +57,7 @@ async function save() {
       pattern: form.value.pattern,
       walletId: form.value.walletId,
       matchType: form.value.matchType,
+      requireConfirmation: form.value.requireConfirmation,
     });
   }
   modalOpen.value = false;
@@ -70,6 +87,7 @@ function walletName(id: number): string {
             <th class="px-4 py-2 font-medium">Pattern</th>
             <th class="px-4 py-2 font-medium">Match</th>
             <th class="px-4 py-2 font-medium">Wallet</th>
+            <th class="px-4 py-2 font-medium">Confirm</th>
             <th class="px-4 py-2" />
           </tr>
         </thead>
@@ -78,6 +96,7 @@ function walletName(id: number): string {
             <td class="px-4 py-3 font-medium">{{ r.pattern }}</td>
             <td class="px-4 py-3 text-zinc-400">{{ r.matchType }}</td>
             <td class="px-4 py-3 text-zinc-400">{{ walletName(r.walletId) }}</td>
+            <td class="px-4 py-3 text-zinc-400">{{ r.requireConfirmation ? 'Required' : 'Auto' }}</td>
             <td class="px-4 py-3 text-right">
               <button
                 class="text-xs px-2 py-1 rounded border border-zinc-800 hover:bg-zinc-900 mr-2"
@@ -94,7 +113,7 @@ function walletName(id: number): string {
             </td>
           </tr>
           <tr v-if="!(rules.data.value ?? []).length">
-            <td colspan="4" class="px-4 py-8 text-center text-zinc-500">No rules yet</td>
+            <td colspan="5" class="px-4 py-8 text-center text-zinc-500">No rules yet</td>
           </tr>
         </tbody>
       </table>
@@ -129,6 +148,14 @@ function walletName(id: number): string {
               {{ w.icon }} {{ w.name }}
             </option>
           </select>
+        </label>
+        <label class="flex items-center gap-2 text-sm">
+          <input
+            v-model="form.requireConfirmation"
+            type="checkbox"
+            class="rounded border-zinc-700 bg-zinc-900"
+          />
+          <span class="text-zinc-300">Require confirmation on match</span>
         </label>
         <div class="flex justify-end gap-2 pt-2">
           <button

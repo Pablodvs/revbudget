@@ -1,7 +1,12 @@
 import { z } from 'zod';
 import { MIN_CONTAINS_PATTERN_LENGTH, normalizePattern } from './normalize';
 
-export const TransactionStatus = z.enum(['pending', 'classified', 'ignored']);
+export const TransactionStatus = z.enum([
+  'pending',
+  'pending_confirmation',
+  'classified',
+  'ignored',
+]);
 export type TransactionStatus = z.infer<typeof TransactionStatus>;
 
 export const TransactionType = z.enum(['expense', 'income', 'refund', 'adjustment']);
@@ -121,6 +126,7 @@ export const MerchantRuleSchema = z.object({
   pattern: z.string().min(1),
   walletId: Id,
   matchType: MatchType,
+  requireConfirmation: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -131,6 +137,7 @@ export const MerchantRuleCreateSchema = z
     pattern: z.string().min(1).max(128),
     walletId: Id,
     matchType: MatchType.default('exact'),
+    requireConfirmation: z.boolean().default(true),
   })
   .superRefine((val, ctx) => {
     if (val.matchType === 'contains') {
@@ -151,6 +158,7 @@ export const MerchantRuleUpdateSchema = z
     pattern: z.string().min(1).max(128).optional(),
     walletId: Id.optional(),
     matchType: MatchType.optional(),
+    requireConfirmation: z.boolean().optional(),
   })
   .superRefine((val, ctx) => {
     if (val.matchType === 'contains' && val.pattern !== undefined) {

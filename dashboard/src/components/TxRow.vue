@@ -39,6 +39,12 @@ const formattedDate = computed(() =>
             pending
           </span>
           <span
+            v-else-if="tx.status === 'pending_confirmation'"
+            class="ml-2 px-1.5 py-0.5 rounded bg-sky-400/10 text-sky-300 text-[10px]"
+          >
+            awaiting confirm
+          </span>
+          <span
             v-else-if="tx.status === 'ignored'"
             class="ml-2 px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-500 text-[10px]"
           >

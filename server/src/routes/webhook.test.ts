@@ -2,12 +2,14 @@ import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from 'b
 
 const sendClassifyPrompt = mock(async (_tx: unknown) => 1001);
 const sendConfirmation = mock(async (_tx: unknown) => undefined);
+const sendConfirmRulePrompt = mock(async (_tx: unknown) => 3003);
 const sendParseFailedPrompt = mock(async (_pf: unknown) => 2002);
 
 mock.module('../services/telegram', () => ({
   bot: { api: { getChat: async () => ({ id: 123, type: 'private' }) } },
   sendClassifyPrompt,
   sendConfirmation,
+  sendConfirmRulePrompt,
   sendParseFailedPrompt,
 }));
 
@@ -91,11 +93,14 @@ describe('POST /api/webhook/revolut', () => {
     expect(res.status).toBe(401);
   });
 
-  test('classified path: matching rule inserts transaction and sends confirmation', async () => {
+  test('auto-classify when rule.requireConfirmation=false', async () => {
     const wallet = await seedWallet({ name: 'Food' });
-    await db
-      .insert(merchantRules)
-      .values({ pattern: 'mercadona', walletId: wallet.id, matchType: 'exact' });
+    await db.insert(merchantRules).values({
+      pattern: 'mercadona',
+      walletId: wallet.id,
+      matchType: 'exact',
+      requireConfirmation: false,
+    });
     invalidateContainsCache();
 
     const res = await postWebhook({ text: 'You paid €12.50 at Mercadona' });
@@ -111,7 +116,32 @@ describe('POST /api/webhook/revolut', () => {
 
     expect(sendConfirmation).toHaveBeenCalledTimes(1);
     expect(sendClassifyPrompt).toHaveBeenCalledTimes(0);
+    expect(sendConfirmRulePrompt).toHaveBeenCalledTimes(0);
     expect(sendParseFailedPrompt).toHaveBeenCalledTimes(0);
+  });
+
+  test('pending_confirmation when rule.requireConfirmation=true', async () => {
+    const wallet = await seedWallet({ name: 'Food' });
+    await db
+      .insert(merchantRules)
+      .values({ pattern: 'mercadona', walletId: wallet.id, matchType: 'exact' });
+    invalidateContainsCache();
+
+    const res = await postWebhook({ text: 'You paid €8.00 at Mercadona' });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; status: string };
+    expect(body.status).toBe('pending_confirmation');
+
+    const txs = await db.select().from(transactions);
+    expect(txs.length).toBe(1);
+    expect(txs[0]?.walletId).toBe(wallet.id);
+    expect(txs[0]?.status).toBe('pending_confirmation');
+    expect(txs[0]?.classifiedAt).toBeNull();
+    expect(txs[0]?.telegramMessageId).toBe(3003);
+
+    expect(sendConfirmRulePrompt).toHaveBeenCalledTimes(1);
+    expect(sendConfirmation).toHaveBeenCalledTimes(0);
+    expect(sendClassifyPrompt).toHaveBeenCalledTimes(0);
   });
 
   test('pending path: no rule triggers classify prompt and stores msgId', async () => {
@@ -222,11 +252,14 @@ describe('POST /api/webhook/revolut', () => {
     expect(txs[0]?.merchantDisplay).toBe('SPAR');
   });
 
-  test('income: classified path when sender has merchant rule', async () => {
+  test('income: auto-classify when rule.requireConfirmation=false', async () => {
     const wallet = await seedWallet({ name: 'Salary' });
-    await db
-      .insert(merchantRules)
-      .values({ pattern: 'acme corp', walletId: wallet.id, matchType: 'exact' });
+    await db.insert(merchantRules).values({
+      pattern: 'acme corp',
+      walletId: wallet.id,
+      matchType: 'exact',
+      requireConfirmation: false,
+    });
     invalidateContainsCache();
 
     const res = await postWebhook({ text: 'You received €1,500.00 from ACME Corp' });

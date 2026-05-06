@@ -99,6 +99,14 @@ const MATCHERS: Matcher[] = [
       'iu',
     ),
   },
+  {
+    name: 'en-youve-received-payment-refund',
+    type: 'refund',
+    regex: new RegExp(
+      `^${EMOJI_PREFIX}You[\u2019']ve${SPACE}received${SPACE}a${SPACE}payment${SPACE}refund${SPACE}of${SPACE}(?<cur>${CURR})${AC_SEP}(?<amt>${AMOUNT})${SPACE}from${SPACE}(?<merch>.+?)$`,
+      'iu',
+    ),
+  },
 ];
 
 function normalizeMerchant(s: string): string {

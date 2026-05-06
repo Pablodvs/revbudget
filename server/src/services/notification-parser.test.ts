@@ -143,6 +143,31 @@ describe('parseNotification', () => {
     expect(r.value.merchantDisplay).toBe('AMAZON');
   });
 
+  test("refund: Refund arrived 🎉: You've received a payment refund of €21 from IKEA", () => {
+    const r = parseNotification(
+      "Refund arrived 🎉: You've received a payment refund of €21 from IKEA",
+      fixedDate,
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.type).toBe('refund');
+    expect(r.value.amount).toBe(2100);
+    expect(r.value.currency).toBe('EUR');
+    expect(r.value.merchantDisplay).toBe('IKEA');
+  });
+
+  test('refund: curly apostrophe variant (You\u2019ve received a payment refund)', () => {
+    const r = parseNotification(
+      'Refund arrived \ud83c\udf89: You\u2019ve received a payment refund of \u20ac21 from IKEA',
+      fixedDate,
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.type).toBe('refund');
+    expect(r.value.amount).toBe(2100);
+    expect(r.value.merchantDisplay).toBe('IKEA');
+  });
+
   test('en: title prefix + balance trailer (real Revolut push)', () => {
     const r = parseNotification(
       'Acme Stores: 🛒 Paid €35.11 at FreshMart\nCredit available: €1,000.00',

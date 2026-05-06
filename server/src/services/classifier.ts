@@ -7,6 +7,7 @@ export type ClassifyResult = {
   wallet: WalletRow | null;
   ruleId: number | null;
   matchType: 'exact' | 'contains' | null;
+  requireConfirmation: boolean;
 };
 
 type ContainsRule = {
@@ -14,6 +15,7 @@ type ContainsRule = {
   walletId: number;
   pattern: string;
   wallet: WalletRow;
+  requireConfirmation: boolean;
 };
 
 // Module-level cache of `contains` rules (joined with wallet). Invalidated from
@@ -37,6 +39,7 @@ async function loadContainsRules(): Promise<ContainsRule[]> {
       id: merchantRules.id,
       walletId: merchantRules.walletId,
       pattern: merchantRules.pattern,
+      requireConfirmation: merchantRules.requireConfirmation,
       wallet: wallets,
     })
     .from(merchantRules)
@@ -48,12 +51,19 @@ async function loadContainsRules(): Promise<ContainsRule[]> {
 
 export async function classifyMerchant(normalizedMerchant: string): Promise<ClassifyResult> {
   if (!normalizedMerchant) {
-    return { walletId: null, wallet: null, ruleId: null, matchType: null };
+    return {
+      walletId: null,
+      wallet: null,
+      ruleId: null,
+      matchType: null,
+      requireConfirmation: false,
+    };
   }
   const exact = await db
     .select({
       id: merchantRules.id,
       walletId: merchantRules.walletId,
+      requireConfirmation: merchantRules.requireConfirmation,
       wallet: wallets,
     })
     .from(merchantRules)
@@ -67,6 +77,7 @@ export async function classifyMerchant(normalizedMerchant: string): Promise<Clas
       wallet: first.wallet,
       ruleId: first.id,
       matchType: 'exact',
+      requireConfirmation: first.requireConfirmation,
     };
   }
   const contains = await loadContainsRules();
@@ -78,16 +89,23 @@ export async function classifyMerchant(normalizedMerchant: string): Promise<Clas
         wallet: rule.wallet,
         ruleId: rule.id,
         matchType: 'contains',
+        requireConfirmation: rule.requireConfirmation,
       };
     }
   }
-  return { walletId: null, wallet: null, ruleId: null, matchType: null };
+  return {
+    walletId: null,
+    wallet: null,
+    ruleId: null,
+    matchType: null,
+    requireConfirmation: false,
+  };
 }
 
 export async function upsertExactRule(pattern: string, walletId: number): Promise<void> {
   await db
     .insert(merchantRules)
-    .values({ pattern, walletId, matchType: 'exact' })
+    .values({ pattern, walletId, matchType: 'exact', requireConfirmation: false })
     .onConflictDoUpdate({
       target: merchantRules.pattern,
       set: { walletId, matchType: 'exact', updatedAt: new Date().toISOString() },

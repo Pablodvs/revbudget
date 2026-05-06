@@ -7,7 +7,7 @@ import { api } from '../lib/api';
 type Filters = {
   month?: string;
   walletId?: number | null;
-  status?: 'pending' | 'classified' | 'ignored' | null;
+  status?: 'pending' | 'pending_confirmation' | 'classified' | 'ignored' | null;
   limit?: number;
 };
 

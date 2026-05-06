@@ -22,6 +22,13 @@
       "when": 1776297074936,
       "tag": "0002_sour_vampiro",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1776457264706,
+      "tag": "0003_rule_confirm_flow",
+      "breakpoints": true
     }
   ]
 }

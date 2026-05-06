@@ -2,17 +2,22 @@ import { zValidator } from '@hono/zod-validator';
 import { eq } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { WebhookBodySchema } from 'shared';
+import { config } from '../config';
 import { db } from '../db';
 import { parseFailures, transactions } from '../db/schema';
 import { getClientIp } from '../lib/client-ip';
 import { log } from '../lib/log';
 import { rateLimit } from '../middleware/rate-limit';
 import { webhookSecret } from '../middleware/webhook-secret';
-import { config } from '../config';
 import { classifyMerchant } from '../services/classifier';
 import { parseNotification } from '../services/notification-parser';
 import { normalizeWithOllama } from '../services/ollama-normalizer';
-import { sendClassifyPrompt, sendConfirmation, sendParseFailedPrompt } from '../services/telegram';
+import {
+  sendClassifyPrompt,
+  sendConfirmRulePrompt,
+  sendConfirmation,
+  sendParseFailedPrompt,
+} from '../services/telegram';
 
 type Variables = { requestId: string };
 
@@ -82,6 +87,52 @@ export const webhookRoute = new Hono<{ Variables: Variables }>()
 
     if (match.walletId !== null && match.wallet !== null) {
       const wallet = match.wallet;
+      if (match.requireConfirmation) {
+        const [inserted] = await db
+          .insert(transactions)
+          .values({
+            walletId: match.walletId,
+            amount: parsed.value.amount,
+            currency: parsed.value.currency,
+            merchant: parsed.value.merchant,
+            merchantDisplay: parsed.value.merchantDisplay,
+            rawText: body.text,
+            status: 'pending_confirmation',
+            type: parsed.value.type,
+            transactionDate: parsed.value.transactionDate,
+          })
+          .returning();
+        if (inserted) {
+          const msgId = await sendConfirmRulePrompt({
+            id: inserted.id,
+            merchantDisplay: parsed.value.merchantDisplay,
+            amount: parsed.value.amount,
+            currency: parsed.value.currency,
+            walletName: wallet.name,
+            walletIcon: wallet.icon,
+          }).catch((err: unknown) => {
+            log.error(rid, 'webhook_confirm_rule_prompt_failed', {
+              transactionId: inserted.id,
+              walletId: match.walletId,
+              err: String(err),
+            });
+            return null;
+          });
+          if (msgId !== null) {
+            await db
+              .update(transactions)
+              .set({ telegramMessageId: msgId })
+              .where(eq(transactions.id, inserted.id))
+              .catch((err: unknown) => {
+                log.error(rid, 'webhook_msgid_update_failed', {
+                  transactionId: inserted.id,
+                  err: String(err),
+                });
+              });
+          }
+        }
+        return c.json({ ok: true, status: 'pending_confirmation' });
+      }
       const [inserted] = await db
         .insert(transactions)
         .values({

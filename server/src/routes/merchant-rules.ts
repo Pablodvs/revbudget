@@ -25,6 +25,7 @@ export const merchantRulesRoute = new Hono()
         pattern: normalizePattern(body.pattern),
         walletId: body.walletId,
         matchType: body.matchType,
+        requireConfirmation: body.requireConfirmation,
       })
       .returning();
     invalidateContainsCache();
@@ -42,6 +43,8 @@ export const merchantRulesRoute = new Hono()
       if (body.pattern !== undefined) patch.pattern = normalizePattern(body.pattern);
       if (body.walletId !== undefined) patch.walletId = body.walletId;
       if (body.matchType !== undefined) patch.matchType = body.matchType;
+      if (body.requireConfirmation !== undefined)
+        patch.requireConfirmation = body.requireConfirmation;
       const [row] = await db
         .update(merchantRules)
         .set(patch)
