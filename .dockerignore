@@ -1,0 +1,47 @@
+# VCS / tooling
+.git
+.gitignore
+.gitattributes
+.github
+
+# Editor / OS
+.DS_Store
+.vscode
+.idea
+
+# Build outputs (rebuilt in image)
+dist
+dashboard/dist
+server/dist
+
+# Dependencies (reinstalled in image)
+node_modules
+**/node_modules
+.bun
+.vite
+.turbo
+.cache
+
+# Local data — never bake the DB into the image
+data
+server/data
+**/*.db
+**/*.db-journal
+**/*.db-wal
+**/*.db-shm
+
+# Secrets — runtime env comes from compose, never from the image
+.env
+.env.*
+!.env.example
+
+# Project metadata
+.claude
+tasks
+*.log
+
+# Docker artefacts (avoid recursive copy of self)
+Dockerfile
+docker-compose.yml
+docker-compose.*.yml
+.dockerignore

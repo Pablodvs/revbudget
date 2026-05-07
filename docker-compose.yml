@@ -1,0 +1,47 @@
+name: revbudget
+
+services:
+  app:
+    build:
+      context: .
+      args:
+        API_TOKEN: ${API_TOKEN:?API_TOKEN must be set in .env}
+    image: revbudget:local
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: /app/data/revbudget.db
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+      TRUST_PROXY: "true"
+    extra_hosts:
+      # Lets the container reach an Ollama running on the docker host.
+      # Native on macOS/Windows; the host-gateway alias is what enables it on Linux.
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./data:/app/data
+    expose:
+      # Reachable to other services on the compose network (cloudflared, Traefik).
+      # No host port is published: public ingress goes through the cloudflared
+      # sidecar, never through the docker host.
+      - "3000"
+    # Uncomment for local testing without the tunnel:
+    # ports:
+    #   - "127.0.0.1:3000:3000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    # If TUNNEL_TOKEN is empty, cloudflared exits with a clear error. The profile
+    # gate means this service only starts when explicitly requested.
+    command: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN:-}
+    depends_on:
+      app:
+        condition: service_healthy

@@ -85,6 +85,80 @@ bun run start   # boots Hono in production mode (serves dashboard/dist and /api/
 
 In production, the Hono server serves the dashboard's static files via `hono/bun`'s `serveStatic` and mounts the API under `/api`.
 
+## Docker
+
+A multi-stage Dockerfile bundles the Hono server, builds the SPA, and ships everything as a single image. SQLite persists to a host bind-mount, the Telegram bot runs in-process via long polling, and a `cloudflared` sidecar (opt-in via the `tunnel` profile) exposes the webhook + dashboard publicly without opening host ports.
+
+### One-time setup
+
+```bash
+cp .env.example .env
+# fill in TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, WEBHOOK_SECRET, API_TOKEN, DASHBOARD_ORIGIN
+mkdir -p data
+```
+
+The dashboard's API token is baked into JS at build time, so `API_TOKEN` is read both at build (via `--build-arg`) and at runtime. Rotating the token requires `docker compose up -d --build`.
+
+### Run with the Cloudflare Tunnel sidecar
+
+1. Create a tunnel in the Cloudflare dashboard (Zero Trust → Networks → Tunnels), add a public hostname pointing to `http://app:3000`, and copy the connector token.
+2. In `.env`: set `TUNNEL_TOKEN`, `COMPOSE_PROFILES=tunnel`, and `DASHBOARD_ORIGIN=https://<your-tunnel-host>`.
+3. Bring everything up:
+   ```bash
+   docker compose up -d --build
+   ```
+
+The webhook is now reachable at `https://<your-tunnel-host>/api/webhook/revolut` — point the Android companion app there. ngrok is no longer needed.
+
+### Run locally without the tunnel
+
+The `app` service uses `expose: 3000`, not `ports:`, so the host port isn't published by default. To test the container without the tunnel:
+
+```bash
+# one-off port forward without editing the compose file
+docker compose run --rm --service-ports -p 127.0.0.1:3000:3000 app
+```
+
+…or uncomment the `ports:` block in `docker-compose.yml`. The native `bun run dev` workflow remains the recommended dev loop.
+
+### Deploy on Coolify (with Cloudflare Tunnel)
+
+This compose was designed for the Coolify + Cloudflare Tunnel pattern: cloudflared is a sidecar of the app, Coolify's Traefik is bypassed, and no host ports leak.
+
+In Coolify:
+
+1. **Application type**: *Docker Compose*. Point at this repo / branch; build context `.`, compose file `docker-compose.yml`.
+2. **Build args**: set `API_TOKEN` to a 32-char secret. Same value goes into runtime env.
+3. **Environment**: copy from `.env.example` — at minimum `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `WEBHOOK_SECRET`, `API_TOKEN`, `DASHBOARD_ORIGIN` (= your tunnel hostname), `TUNNEL_TOKEN`, and `COMPOSE_PROFILES=tunnel`. Skip `VITE_*` (build-time only) and `OLLAMA_URL` unless your Ollama isn't reachable from the Coolify host.
+4. **Persistent storage**: mount `/app/data` to a Coolify-managed volume (or accept the default bind to the deployment dir). Backed up by Coolify between deploys.
+5. **Domain / "Expose to internet"**: leave **disabled**. The cloudflared sidecar is the only public ingress; you don't want Coolify's Traefik fighting over the same service.
+6. **Deployment strategy**: *Recreate* (kill the old container before starting the new one). The Telegram bot uses long polling, and Telegram returns `409 Conflict` if two instances poll the same token at once.
+7. **Cloudflare Tunnel public hostname**: set the service URL in the Cloudflare dashboard to `http://app:3000` — `app` is the docker-compose service name and resolves over the project's internal network.
+
+Coolify rebuilds on every git push; cached layers keep the rebuild under a minute when only source changes.
+
+### Data persistence
+
+The SQLite DB lives in `./data/revbudget.db` on the host. Migrations (and the idempotent wallet seed) run from the entrypoint on every container start. To inspect:
+
+```bash
+docker compose exec app bun /app/dist/migrate.js   # re-run migrations
+sqlite3 data/revbudget.db ".tables"                # inspect from the host
+```
+
+### Ollama
+
+By default the container points `OLLAMA_URL` at `http://host.docker.internal:11434` (works on macOS, Windows, and Linux via the `host-gateway` mapping). To disable the normalizer entirely, set `OLLAMA_ENABLED=false` in `.env`. To target a remote Ollama, override `OLLAMA_URL`.
+
+### Updating
+
+```bash
+git pull
+docker compose up -d --build
+```
+
+The build cache reuses unchanged layers so iterative builds are fast. On Coolify, the same happens automatically on every push to the tracked branch.
+
 ## Safety
 
 - Env vars validated with Zod at boot (boot crashes on bad config)
