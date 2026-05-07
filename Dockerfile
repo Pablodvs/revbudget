@@ -48,10 +48,12 @@ RUN bun run --cwd dashboard build \
 FROM oven/bun:${BUN_VERSION}-alpine AS runner
 WORKDIR /app
 
-# Use the bun user that ships in oven/bun (uid:gid 1000:1000). Matches the
-# typical host user on Linux, so bind-mounted ./data is read/writable without
-# extra chown gymnastics.
-RUN apk add --no-cache curl tini \
+# The app runs as the bun user (uid:gid 1000:1000) that ships in oven/bun.
+# We don't set `USER bun` here on purpose: the entrypoint starts as root so it
+# can chown a freshly-mounted /app/data (Coolify-managed volumes come up
+# root-owned and would otherwise block sqlite writes), then drops to bun via
+# su-exec before running migrations and the app.
+RUN apk add --no-cache curl tini su-exec \
  && mkdir -p /app/data \
  && chown -R bun:bun /app
 
@@ -62,7 +64,6 @@ COPY --from=build --chown=bun:bun /app/dashboard/dist   /app/dashboard/dist
 COPY --chown=bun:bun docker/entrypoint.sh               /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
-USER bun
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
