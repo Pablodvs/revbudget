@@ -45,6 +45,39 @@ revbudget/
    bun run db:seed       # inserts the 7 default wallets
    ```
 
+## Authentication
+
+The dashboard is gated by `better-auth` cookie sessions; the management API (`/api/wallets`, `/api/transactions`, `/api/merchant-rules`, `/api/stats`) requires a logged-in user. Invite-only — public sign-up is disabled. The Android-app webhook (`/api/webhook/revolut`) is unchanged: still gated by `WEBHOOK_SECRET` (machine-to-machine, no human user).
+
+### First-run admin
+
+Pick one:
+
+```bash
+# CLI (recommended — leaves no plaintext password in env)
+bun run create-admin -- --email me@example.com --password '...' --role admin
+```
+
+```bash
+# Or boot-time env bootstrap (handy on Coolify's first deploy).
+# Creates an admin only if no users exist; remove from env after first boot.
+BOOTSTRAP_ADMIN_EMAIL=me@example.com
+BOOTSTRAP_ADMIN_PASSWORD=...
+```
+
+### Inviting more users
+
+Once an admin exists, log in and visit **/users** in the dashboard to add accounts. Each invitee is given a password by the admin; they should change it from their browser after first login.
+
+### Env vars
+
+| Variable | Purpose |
+| -------- | ------- |
+| `BETTER_AUTH_SECRET` | 32+ char random string. Generate with `openssl rand -hex 32`. |
+| `BETTER_AUTH_URL` | Public URL where `/api/auth/*` is reachable. In production this is your tunnel hostname; **must use `https://`** so cookies get the `Secure` attribute. |
+| `BOOTSTRAP_ADMIN_EMAIL` | Optional first-run admin email. |
+| `BOOTSTRAP_ADMIN_PASSWORD` | Optional first-run admin password (≥ 8 chars). |
+
 ## Development
 
 Start both server (port 3000) and dashboard (port 5173) with hot reload:
@@ -93,11 +126,12 @@ A multi-stage Dockerfile bundles the Hono server, builds the SPA, and ships ever
 
 ```bash
 cp .env.example .env
-# fill in TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, WEBHOOK_SECRET, API_TOKEN, DASHBOARD_ORIGIN
+# fill in TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, WEBHOOK_SECRET,
+# BETTER_AUTH_SECRET, BETTER_AUTH_URL, DASHBOARD_ORIGIN
 mkdir -p data
 ```
 
-The dashboard's API token is baked into JS at build time, so `API_TOKEN` is read both at build (via `--build-arg`) and at runtime. Rotating the token requires `docker compose up -d --build`.
+Auth uses cookie sessions managed by `better-auth` — no token is baked into the JS bundle, so the dashboard image is the same across deploys. Rotating `BETTER_AUTH_SECRET` invalidates all existing sessions but doesn't require a rebuild.
 
 ### Run with the Cloudflare Tunnel sidecar
 
@@ -128,8 +162,7 @@ This compose was designed for the Coolify + Cloudflare Tunnel pattern: cloudflar
 In Coolify:
 
 1. **Application type**: *Docker Compose*. Point at this repo / branch; build context `.`, compose file `docker-compose.yml`.
-2. **Build args**: set `API_TOKEN` to a 32-char secret. Same value goes into runtime env.
-3. **Environment**: copy from `.env.example` — at minimum `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `WEBHOOK_SECRET`, `API_TOKEN`, `DASHBOARD_ORIGIN` (= your tunnel hostname), `TUNNEL_TOKEN`, and `COMPOSE_PROFILES=tunnel`. Skip `VITE_*` (build-time only) and `OLLAMA_URL` unless your Ollama isn't reachable from the Coolify host.
+2. **Environment**: copy from `.env.example` — at minimum `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `WEBHOOK_SECRET`, `BETTER_AUTH_SECRET` (32+ chars), `DASHBOARD_ORIGIN` (= `https://<your-tunnel-host>`), `BETTER_AUTH_URL` (same as `DASHBOARD_ORIGIN`), `TUNNEL_TOKEN`, and `COMPOSE_PROFILES=tunnel`. For first-run admin bootstrap, also set `BOOTSTRAP_ADMIN_EMAIL` + `BOOTSTRAP_ADMIN_PASSWORD` for the initial deploy, then remove them. Skip `VITE_*` and `OLLAMA_URL` unless your Ollama isn't reachable from the Coolify host.
 4. **Persistent storage**: mount `/app/data` to a Coolify-managed volume (or accept the default bind to the deployment dir). Backed up by Coolify between deploys.
 5. **Domain / "Expose to internet"**: leave **disabled**. The cloudflared sidecar is the only public ingress; you don't want Coolify's Traefik fighting over the same service.
 6. **Deployment strategy**: *Recreate* (kill the old container before starting the new one). The Telegram bot uses long polling, and Telegram returns `409 Conflict` if two instances poll the same token at once.
@@ -162,6 +195,8 @@ The build cache reuses unchanged layers so iterative builds are fast. On Coolify
 ## Safety
 
 - Env vars validated with Zod at boot (boot crashes on bad config)
+- Dashboard / management API gated by `better-auth` cookie sessions; public sign-up disabled
+- Sign-in rate-limited (5 attempts / 60s)
 - Webhook shared-secret via `crypto.timingSafeEqual` (constant time)
 - Telegram bot drops any update whose `chat.id` doesn't match `TELEGRAM_CHAT_ID`
 - CORS locked to `DASHBOARD_ORIGIN` (no wildcards)
@@ -174,8 +209,14 @@ The build cache reuses unchanged layers so iterative builds are fast. On Coolify
 
 ## API
 
+All routes below except `/api/auth/*`, `/api/webhook/*`, and `/api/health` require an authenticated session cookie (set by `POST /api/auth/sign-in/email`). Webhook ingest stays on `X-Webhook-Secret`.
+
 | Method | Path                        | Notes                                           |
 | ------ | --------------------------- | ----------------------------------------------- |
+| POST   | `/api/auth/sign-in/email`   | Sets `better-auth.session_token` cookie         |
+| POST   | `/api/auth/sign-out`        |                                                 |
+| GET    | `/api/auth/get-session`     |                                                 |
+| POST   | `/api/auth/admin/create-user` | Admin-only; invite/onboard another user       |
 | POST   | `/api/webhook/revolut`      | Webhook ingest, requires `X-Webhook-Secret`     |
 | GET    | `/api/wallets`              |                                                 |
 | GET    | `/api/wallets/:id`          |                                                 |

@@ -9,6 +9,8 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/sqlite-core';
 
+export * from './auth-schema';
+
 export const PARSE_FAILURE_ERROR_CODES = ['empty', 'no_match', 'invalid_amount'] as const;
 export type ParseFailureErrorCode = (typeof PARSE_FAILURE_ERROR_CODES)[number];
 

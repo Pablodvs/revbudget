@@ -13,6 +13,7 @@
     "db:migrate": "bun server/src/db/migrate.ts",
     "db:seed": "bun server/src/db/seed.ts",
     "db:studio": "bun run --cwd server db:studio",
+    "create-admin": "bun server/src/scripts/create-admin.ts",
     "test": "bun test",
     "lint": "bunx biome check .",
     "format": "bunx biome format --write .",

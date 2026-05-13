@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { config as realConfig } from '../config';
 
+// `mock.module` mutates Bun's global module registry for the rest of the
+// process, so any leak into other test files would yield a stripped-down
+// config object missing required fields. Spread the real config to keep
+// non-Ollama callers working if file load order changes.
 const fakeConfig = {
+  ...realConfig,
   OLLAMA_ENABLED: true,
   OLLAMA_URL: 'http://localhost:11434',
   OLLAMA_MODEL: 'test-model',
@@ -106,7 +112,9 @@ describe('normalizeWithOllama', () => {
 
   test('tolerates code fences and surrounding whitespace in JSON output', async () => {
     const fetchMock = mock(async () =>
-      genResponse('```json\n{"type":"expense","amount":7.75,"currency":"EUR","merchant":"AMAZON"}\n```'),
+      genResponse(
+        '```json\n{"type":"expense","amount":7.75,"currency":"EUR","merchant":"AMAZON"}\n```',
+      ),
     );
     globalThis.fetch = fetchMock as unknown as typeof fetch;
     const out = await normalizeWithOllama('You paid €7.75 at AMAZON', 'rid', fixedDate);

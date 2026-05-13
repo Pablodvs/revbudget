@@ -4,16 +4,14 @@ import { db } from '../db';
 import { merchantRules, transactions } from '../db/schema';
 import { stopRateLimitSweeper } from '../middleware/rate-limit';
 import { invalidateContainsCache } from '../services/classifier';
-import { ensureMigrated, seedWallet, truncateAll } from '../test/db';
+import { authedHeaders, ensureMigrated, seedWallet, truncateAll } from '../test/db';
 
 const { app } = await import('../app');
-const AUTH = {
-  Authorization: `Bearer ${process.env.API_TOKEN}`,
-  'Content-Type': 'application/json',
-};
+let AUTH: Record<string, string>;
 
-beforeAll(() => {
+beforeAll(async () => {
   ensureMigrated();
+  AUTH = await authedHeaders();
 });
 
 afterAll(() => {

@@ -6,7 +6,10 @@ const EnvSchema = z.object({
   TELEGRAM_BOT_TOKEN: z.string().min(10),
   TELEGRAM_CHAT_ID: z.coerce.number().int(),
   WEBHOOK_SECRET: z.string().min(32, 'WEBHOOK_SECRET must be at least 32 chars'),
-  API_TOKEN: z.string().min(32, 'API_TOKEN must be at least 32 chars'),
+  BETTER_AUTH_SECRET: z.string().min(32, 'BETTER_AUTH_SECRET must be at least 32 chars'),
+  BETTER_AUTH_URL: z.string().url().optional(),
+  BOOTSTRAP_ADMIN_EMAIL: z.string().email().optional(),
+  BOOTSTRAP_ADMIN_PASSWORD: z.string().min(8).optional(),
   TRUST_PROXY: z
     .union([z.boolean(), z.string()])
     .default(false)
@@ -26,7 +29,7 @@ const EnvSchema = z.object({
 export type AppConfig = z.infer<typeof EnvSchema>;
 
 function load(): AppConfig {
-  const parsed = EnvSchema.safeParse(Bun.env);
+  const parsed = EnvSchema.safeParse(process.env);
   if (!parsed.success) {
     const issues = parsed.error.issues
       .map((i) => `  - ${i.path.join('.') || '(root)'}: ${i.message}`)

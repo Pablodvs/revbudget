@@ -22,10 +22,8 @@ FROM oven/bun:${BUN_VERSION}-alpine AS build
 WORKDIR /app
 
 # Vite inlines VITE_* at build time. Empty VITE_API_URL ⇒ same-origin requests.
-# API_TOKEN is passed in via build args so VITE_API_TOKEN matches the runtime API_TOKEN.
-ARG API_TOKEN=""
+# Auth uses cookie sessions, so no token gets baked into the dashboard bundle.
 ENV VITE_API_URL=""
-ENV VITE_API_TOKEN=${API_TOKEN}
 
 # Bun's workspace install puts hoisted deps in /app/node_modules and
 # workspace-local binaries (e.g. vue-tsc, vite) under <workspace>/node_modules.
