@@ -15,6 +15,12 @@ const EnvSchema = z.object({
     .default(false)
     .transform((v) => (typeof v === 'boolean' ? v : v === 'true' || v === '1')),
   DASHBOARD_ORIGIN: z.string().url().default('http://localhost:5173'),
+  TRUSTED_ORIGINS: z
+    .string()
+    .optional()
+    .default('')
+    .transform((v) => v.split(',').map((s) => s.trim()).filter(Boolean))
+    .pipe(z.array(z.string().url())),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   APP_TIMEZONE: z.string().default('Europe/Madrid'),
   OLLAMA_ENABLED: z
@@ -26,7 +32,7 @@ const EnvSchema = z.object({
   OLLAMA_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
 });
 
-export type AppConfig = z.infer<typeof EnvSchema>;
+export type AppConfig = z.infer<typeof EnvSchema> & { trustedOrigins: string[] };
 
 function load(): AppConfig {
   const parsed = EnvSchema.safeParse(process.env);
@@ -37,7 +43,11 @@ function load(): AppConfig {
     console.error(`\n[config] Invalid environment variables:\n${issues}\n`);
     process.exit(1);
   }
-  return parsed.data;
+  const data = parsed.data;
+  const trustedOrigins = Array.from(
+    new Set([data.DASHBOARD_ORIGIN, ...data.TRUSTED_ORIGINS]),
+  );
+  return { ...data, trustedOrigins };
 }
 
 export const config: AppConfig = load();

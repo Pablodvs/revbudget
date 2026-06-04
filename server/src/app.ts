@@ -23,7 +23,7 @@ export const app = new Hono<{ Variables: Variables }>()
   .use(
     '/api/*',
     cors({
-      origin: config.DASHBOARD_ORIGIN,
+      origin: config.trustedOrigins,
       allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
       allowHeaders: ['Content-Type', 'Authorization', 'X-Webhook-Secret'],
       credentials: false,
