@@ -35,9 +35,10 @@ COPY --from=deps /app/dashboard/node_modules  ./dashboard/node_modules
 COPY . .
 
 RUN bun run --cwd dashboard build \
- && bun build server/src/index.ts       --target=bun --outdir=dist \
- && bun build server/src/db/migrate.ts  --target=bun --outdir=dist \
- && bun build server/src/db/seed.ts     --target=bun --outdir=dist \
+ && bun build server/src/index.ts                --target=bun --outdir=dist \
+ && bun build server/src/db/migrate.ts           --target=bun --outdir=dist \
+ && bun build server/src/db/seed.ts              --target=bun --outdir=dist \
+ && bun build server/src/scripts/create-admin.ts --target=bun --outdir=dist \
  && cp -r server/src/db/migrations dist/migrations
 
 # ─────────────────────────────────────────────────────────────────
