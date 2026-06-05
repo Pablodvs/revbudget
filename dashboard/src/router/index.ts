@@ -34,9 +34,14 @@ export const router = createRouter({
   ],
 });
 
-router.beforeEach((to) => {
-  const session = authClient.useSession().value;
-  const user = session.data?.user;
+router.beforeEach(async (to) => {
+  const store = authClient.useSession();
+  // On a fresh load/refresh the reactive session store hasn't resolved yet, so a
+  // synchronous read would bounce an authenticated user to /login. Fetch the
+  // session directly the first time; once the store resolves (App.vue keeps it
+  // subscribed) later navigations read it synchronously without another request.
+  const data = store.value.isPending ? (await authClient.getSession()).data : store.value.data;
+  const user = data?.user;
 
   if (!user) {
     if (to.meta.public) return true;
