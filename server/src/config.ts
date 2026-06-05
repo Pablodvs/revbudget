@@ -19,7 +19,12 @@ const EnvSchema = z.object({
     .string()
     .optional()
     .default('')
-    .transform((v) => v.split(',').map((s) => s.trim()).filter(Boolean))
+    .transform((v) =>
+      v
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean),
+    )
     .pipe(z.array(z.string().url())),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   APP_TIMEZONE: z.string().default('Europe/Madrid'),
@@ -44,8 +49,11 @@ function load(): AppConfig {
     process.exit(1);
   }
   const data = parsed.data;
+  // better-auth implicitly trusts its own baseURL; mirror that for Hono CORS so the
+  // public origin (the tunnel host) is trusted even if DASHBOARD_ORIGIN wasn't set to it.
+  const authOrigin = data.BETTER_AUTH_URL ? [new URL(data.BETTER_AUTH_URL).origin] : [];
   const trustedOrigins = Array.from(
-    new Set([data.DASHBOARD_ORIGIN, ...data.TRUSTED_ORIGINS]),
+    new Set([data.DASHBOARD_ORIGIN, ...authOrigin, ...data.TRUSTED_ORIGINS]),
   );
   return { ...data, trustedOrigins };
 }
