@@ -24,6 +24,10 @@ WORKDIR /app
 # Vite inlines VITE_* at build time. Empty VITE_API_URL ⇒ same-origin requests.
 # Auth uses cookie sessions, so no token gets baked into the dashboard bundle.
 ENV VITE_API_URL=""
+# `bun build` inlines process.env.NODE_ENV at build time. Without this it bakes
+# "development" into the server bundle, silently flipping production-only behaviour
+# (e.g. better-auth's rate limiter) off in the running image.
+ENV NODE_ENV=production
 
 # Bun's workspace install puts hoisted deps in /app/node_modules and
 # workspace-local binaries (e.g. vue-tsc, vite) under <workspace>/node_modules.

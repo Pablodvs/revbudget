@@ -25,6 +25,11 @@ export const auth = betterAuth({
     updateAge: 60 * 60 * 24,
   },
   rateLimit: {
+    // `bun build` inlines process.env.NODE_ENV at build time, and the Docker build
+    // stage baked "development" into the bundle — so better-auth's own production
+    // check (its `enabled` default) reads false in the image and the limiter stays
+    // off. Gate on the app's runtime config (read dynamically, never inlined).
+    enabled: config.NODE_ENV === 'production',
     window: 60,
     max: 5,
   },
