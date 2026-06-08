@@ -5,6 +5,8 @@ import App from './App.vue';
 import { router } from './router';
 import './styles/main.css';
 
+// The router guard resolves the session on the first navigation, so no need to
+// prime it here before mounting.
 const app = createApp(App);
 app.use(createPinia());
 app.use(router);

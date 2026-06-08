@@ -22,10 +22,12 @@ FROM oven/bun:${BUN_VERSION}-alpine AS build
 WORKDIR /app
 
 # Vite inlines VITE_* at build time. Empty VITE_API_URL ⇒ same-origin requests.
-# API_TOKEN is passed in via build args so VITE_API_TOKEN matches the runtime API_TOKEN.
-ARG API_TOKEN=""
+# Auth uses cookie sessions, so no token gets baked into the dashboard bundle.
 ENV VITE_API_URL=""
-ENV VITE_API_TOKEN=${API_TOKEN}
+# `bun build` inlines process.env.NODE_ENV at build time. Without this it bakes
+# "development" into the server bundle, silently flipping production-only behaviour
+# (e.g. better-auth's rate limiter) off in the running image.
+ENV NODE_ENV=production
 
 # Bun's workspace install puts hoisted deps in /app/node_modules and
 # workspace-local binaries (e.g. vue-tsc, vite) under <workspace>/node_modules.
@@ -37,9 +39,10 @@ COPY --from=deps /app/dashboard/node_modules  ./dashboard/node_modules
 COPY . .
 
 RUN bun run --cwd dashboard build \
- && bun build server/src/index.ts       --target=bun --outdir=dist \
- && bun build server/src/db/migrate.ts  --target=bun --outdir=dist \
- && bun build server/src/db/seed.ts     --target=bun --outdir=dist \
+ && bun build server/src/index.ts                --target=bun --outdir=dist \
+ && bun build server/src/db/migrate.ts           --target=bun --outdir=dist \
+ && bun build server/src/db/seed.ts              --target=bun --outdir=dist \
+ && bun build server/src/scripts/create-admin.ts --target=bun --outdir=dist \
  && cp -r server/src/db/migrations dist/migrations
 
 # ─────────────────────────────────────────────────────────────────

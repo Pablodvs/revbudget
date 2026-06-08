@@ -3,7 +3,7 @@ import { monthBounds, toZonedYearMonth } from 'shared';
 import { db } from '../db';
 import { parseFailures, transactions } from '../db/schema';
 import { stopRateLimitSweeper } from '../middleware/rate-limit';
-import { ensureMigrated, seedWallet, truncateAll } from '../test/db';
+import { authedHeaders, ensureMigrated, seedWallet, truncateAll } from '../test/db';
 
 type MonthlyStats = {
   month: string;
@@ -26,10 +26,11 @@ type Trends = {
 };
 
 const { app } = await import('../app');
-const AUTH = { Authorization: `Bearer ${process.env.API_TOKEN}` };
+let AUTH: Record<string, string>;
 
-beforeAll(() => {
+beforeAll(async () => {
   ensureMigrated();
+  AUTH = await authedHeaders();
 });
 
 afterAll(() => {

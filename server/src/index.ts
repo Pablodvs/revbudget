@@ -1,6 +1,7 @@
 import { serveStatic } from 'hono/bun';
 import { app } from './app';
 import { config } from './config';
+import { seedBootstrapAdmin } from './db/seed-admin';
 import { log } from './lib/log';
 import { bot } from './services/telegram';
 
@@ -12,6 +13,12 @@ if (isProduction) {
   app.use('/assets/*', serveStatic({ root: './dashboard/dist' }));
   app.get('*', serveStatic({ path: './dashboard/dist/index.html' }));
 }
+
+seedBootstrapAdmin().catch((err) => {
+  log.error('boot', 'bootstrap_admin_unexpected_error', {
+    err: err instanceof Error ? err.message : String(err),
+  });
+});
 
 if (!isDevToken) {
   bot.api
