@@ -15,3 +15,9 @@ process.env.TRUST_PROXY = 'true';
 process.env.DASHBOARD_ORIGIN = 'http://localhost:5173';
 process.env.NODE_ENV = 'test';
 process.env.APP_TIMEZONE = 'Europe/Madrid';
+// Pin these so the suite stays hermetic against a developer's local `.env` (Bun
+// autoloads it). They're optional in config, and the bootstrap-seed path only runs
+// from index.ts (never imported by tests) — fake-but-valid values keep config
+// validation deterministic, including the BOOTSTRAP_ADMIN_PASSWORD length floor.
+process.env.BOOTSTRAP_ADMIN_EMAIL = 'bootstrap@test.local';
+process.env.BOOTSTRAP_ADMIN_PASSWORD = 'test-bootstrap-password';

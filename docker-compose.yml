@@ -4,8 +4,6 @@ services:
   app:
     build:
       context: .
-      args:
-        API_TOKEN: ${API_TOKEN:?API_TOKEN must be set in .env}
     image: revbudget:local
     restart: unless-stopped
     env_file: .env

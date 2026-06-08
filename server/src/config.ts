@@ -9,7 +9,7 @@ const EnvSchema = z.object({
   BETTER_AUTH_SECRET: z.string().min(32, 'BETTER_AUTH_SECRET must be at least 32 chars'),
   BETTER_AUTH_URL: z.string().url().optional(),
   BOOTSTRAP_ADMIN_EMAIL: z.string().email().optional(),
-  BOOTSTRAP_ADMIN_PASSWORD: z.string().min(8).optional(),
+  BOOTSTRAP_ADMIN_PASSWORD: z.string().min(12).optional(),
   TRUST_PROXY: z
     .union([z.boolean(), z.string()])
     .default(false)

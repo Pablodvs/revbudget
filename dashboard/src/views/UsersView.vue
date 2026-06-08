@@ -102,9 +102,9 @@ onMounted(refresh);
           <span class="text-xs text-zinc-400">Password</span>
           <input
             v-model="newPassword"
-            type="text"
+            type="password"
             required
-            minlength="8"
+            minlength="12"
             class="w-full px-3 py-2 rounded-md bg-zinc-900 border border-zinc-800 focus:border-zinc-600 focus:outline-none"
           />
         </label>

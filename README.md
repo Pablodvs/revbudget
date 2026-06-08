@@ -76,7 +76,7 @@ Once an admin exists, log in and visit **/users** in the dashboard to add accoun
 | `BETTER_AUTH_SECRET` | 32+ char random string. Generate with `openssl rand -hex 32`. |
 | `BETTER_AUTH_URL` | Public URL where `/api/auth/*` is reachable. In production this is your tunnel hostname; **must use `https://`** so cookies get the `Secure` attribute. |
 | `BOOTSTRAP_ADMIN_EMAIL` | Optional first-run admin email. |
-| `BOOTSTRAP_ADMIN_PASSWORD` | Optional first-run admin password (≥ 8 chars). |
+| `BOOTSTRAP_ADMIN_PASSWORD` | Optional first-run admin password (≥ 12 chars). |
 
 ## Development
 
