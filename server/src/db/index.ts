@@ -1,7 +1,6 @@
 import { Database } from 'bun:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/bun-sqlite';
 import { config } from '../config';
 import * as schema from './schema';
@@ -16,8 +15,3 @@ sqlite.exec('PRAGMA busy_timeout = 5000;');
 
 export const db = drizzle(sqlite, { schema });
 export { schema };
-
-export function runPragmas() {
-  db.run(sql`PRAGMA journal_mode = WAL`);
-  db.run(sql`PRAGMA foreign_keys = ON`);
-}

@@ -22,7 +22,8 @@ import {
 type Variables = { requestId: string };
 
 export const webhookRoute = new Hono<{ Variables: Variables }>()
-  .use('*', webhookSecret)
+  // Rate limit first so bad-secret floods are throttled too (and the
+  // timing-safe compare in webhookSecret sits behind the limiter).
   .use(
     '*',
     rateLimit({
@@ -31,6 +32,7 @@ export const webhookRoute = new Hono<{ Variables: Variables }>()
       keyFn: getClientIp,
     }),
   )
+  .use('*', webhookSecret)
   .post('/revolut', zValidator('json', WebhookBodySchema), async (c) => {
     const rid = c.get('requestId') ?? 'unknown';
     const body = c.req.valid('json');

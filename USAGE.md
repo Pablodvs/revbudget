@@ -41,7 +41,6 @@ Then edit `.env`:
 | `TELEGRAM_CHAT_ID` | Your numeric Telegram chat id (see below) |
 | `WEBHOOK_SECRET` | Output of `openssl rand -hex 32` |
 | `DASHBOARD_ORIGIN` | `http://localhost:5173` for dev |
-| `NGROK_URL` | The HTTPS URL ngrok gives you |
 
 **Generate a strong webhook secret:**
 
@@ -55,7 +54,7 @@ openssl rand -hex 32
 2. Open `https://api.telegram.org/bot<TOKEN>/getUpdates` in a browser.
 3. Copy the numeric `chat.id` from the JSON.
 
-The bot will silently drop any update from a different chat id — this is single-user software.
+The bot will silently drop any update from a different chat id — this is single-user software. `TELEGRAM_CHAT_ID` must be your **private chat** with the bot, never a group id: anyone in that chat can classify and ignore transactions.
 
 ### 3. Initialize the database
 
@@ -87,12 +86,10 @@ In a separate terminal:
 ngrok http 3000
 ```
 
-Copy the HTTPS forwarding URL ngrok prints (e.g. `https://abc123.ngrok-free.app`) and:
+Copy the HTTPS forwarding URL ngrok prints (e.g. `https://abc123.ngrok-free.app`) and configure the Android companion app with:
 
-1. Paste it into `.env` as `NGROK_URL` (optional, used for reference).
-2. Configure the Android companion app with:
-   - **Webhook URL:** `<ngrok-url>/api/webhook/revolut`
-   - **Secret header:** `X-Webhook-Secret: <your WEBHOOK_SECRET>`
+- **Webhook URL:** `<ngrok-url>/api/webhook/revolut`
+- **Secret header:** `X-Webhook-Secret: <your WEBHOOK_SECRET>`
 
 The Android app will now POST every Revolut notification it intercepts to your local server.
 

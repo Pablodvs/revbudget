@@ -4,7 +4,6 @@ import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 import { db } from '../db';
 import {
   account,
-  budgetPeriods,
   merchantRules,
   parseFailures,
   session,
@@ -28,7 +27,6 @@ export async function truncateAll(): Promise<void> {
   await db.delete(transactions);
   await db.delete(parseFailures);
   await db.delete(merchantRules);
-  await db.delete(budgetPeriods);
   await db.delete(wallets);
 }
 

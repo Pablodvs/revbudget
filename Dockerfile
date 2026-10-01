@@ -1,11 +1,15 @@
 # syntax=docker/dockerfile:1.7
 
 ARG BUN_VERSION=1.3.12
+# Multi-arch index digest for oven/bun:${BUN_VERSION}-alpine — pins the base
+# image against tag mutation. When bumping BUN_VERSION, refresh with:
+#   docker buildx imagetools inspect oven/bun:<version>-alpine   (top-level Digest)
+ARG BUN_DIGEST=sha256:26d8996560ca94eab9ce48afc0c7443825553c9a851f40ae574d47d20906826d
 
 # ─────────────────────────────────────────────────────────────────
 # deps: install workspace dependencies with a frozen lockfile
 # ─────────────────────────────────────────────────────────────────
-FROM oven/bun:${BUN_VERSION}-alpine AS deps
+FROM oven/bun:${BUN_VERSION}-alpine@${BUN_DIGEST} AS deps
 WORKDIR /app
 
 COPY package.json bun.lock bunfig.toml ./
@@ -18,7 +22,7 @@ RUN bun install --frozen-lockfile
 # ─────────────────────────────────────────────────────────────────
 # build: bundle the dashboard (Vite) and the server (bun build)
 # ─────────────────────────────────────────────────────────────────
-FROM oven/bun:${BUN_VERSION}-alpine AS build
+FROM oven/bun:${BUN_VERSION}-alpine@${BUN_DIGEST} AS build
 WORKDIR /app
 
 # Vite inlines VITE_* at build time. Empty VITE_API_URL ⇒ same-origin requests.
@@ -48,7 +52,7 @@ RUN bun run --cwd dashboard build \
 # ─────────────────────────────────────────────────────────────────
 # runner: minimal runtime image
 # ─────────────────────────────────────────────────────────────────
-FROM oven/bun:${BUN_VERSION}-alpine AS runner
+FROM oven/bun:${BUN_VERSION}-alpine@${BUN_DIGEST} AS runner
 WORKDIR /app
 
 # The app runs as the bun user (uid:gid 1000:1000) that ships in oven/bun.

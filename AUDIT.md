@@ -1,0 +1,139 @@
+# revbudget-review — full codebase audit
+
+- **Date:** 2026-06-09 · **Branch:** `master` (1882348) · **Mode:** read-only, full audit
+- **Reviewed:** 101 files — server (routes, middleware, services, db, config), dashboard (all views/components/composables/stores), shared schemas, Docker/compose/tunnel, scripts, tests, migrations, lockfile.
+- **Verification run:** `bun test` → **86/86 pass** · `bun run typecheck` → clean · `bun run lint` → 7 style errors (see nits) · Hono route-matching and `Intl.NumberFormat` behavior verified empirically against the repo's installed deps.
+
+**Verdict: 0 Critical, 0 High, 3 Medium, 8 Low, nits — no exploitable vulnerability found; the security posture is genuinely strong. The Mediums are one real correctness bug, one input-validation gap that bricks UI rendering, and the known missing CSP.**
+
+---
+
+## 🟡 Medium
+
+### M1 — Editing an unassigned transaction silently flips it to `classified` with no wallet
+`server/src/routes/transactions.ts:73-77` · `dashboard/src/views/TransactionsView.vue:58-84` · Confidence: **High**
+
+- **Why:** The PUT handler treats *presence* of `walletId` in the body as "user classified this":
+  ```ts
+  if (body.walletId !== undefined) {
+    patch.walletId = body.walletId;        // may be null
+    patch.status = body.status ?? 'classified';
+    patch.classifiedAt = now;
+  }
+  ```
+  The dashboard's edit modal **always** sends `walletId` (`save()` in TransactionsView), pre-filled with the current value — `null` for a pending transaction. So editing a pending transaction to, say, fix its description while leaving the wallet as "—" sets `status='classified'` with `walletId=null`. The transaction leaves the pending queue and is **excluded from every stats aggregation** (`stats.ts:47` and `:110` skip `walletId == null` rows): silently mislabeled financial data via a perfectly normal UI flow. Same path makes it impossible to "unassign" a transaction back to pending from the dashboard.
+- **Fix (minimal, root-cause):** only auto-classify on a non-null wallet:
+  ```ts
+  if (body.walletId !== undefined) {
+    patch.walletId = body.walletId;
+    if (body.walletId !== null) {
+      patch.status = body.status ?? 'classified';
+      patch.classifiedAt = now;
+    } else if (body.status === undefined) {
+      patch.status = 'pending';
+      patch.classifiedAt = null;
+    }
+  }
+  ```
+  (and add a test: PUT with `walletId: null` on a pending tx keeps/returns it to `pending`).
+
+### M2 — `currency` accepts any 3 characters; a junk value crashes rendering and the Telegram bot
+`shared/src/schemas.ts:30,42,100` (`z.string().length(3)`) · `shared/src/format.ts:3-8` · Confidence: **High** (verified: `formatCents(1234, '€12')` → `RangeError: currency is not a well-formed currency code`)
+
+- **Why:** `WalletCreateSchema`/`WalletUpdateSchema`/`TransactionCreateSchema` validate currency only as "exactly 3 chars". The wallets form (`WalletsView.vue:178-183`) is a free-text input (`maxlength="3"`; the `uppercase` class is visual only). Any authenticated user saving e.g. `€12`, `ab1` produces a persisted row whose rendering **throws** in:
+  - `WalletsView.vue:108`, `TxRow.vue:57`, `WalletDetailView.vue:122` → the affected views break on every render until the row is fixed via raw API call;
+  - `services/telegram.ts:212` → `/status` crashes (caught by `bot.catch`, command just dies).
+  Webhook-sourced currencies are safe (parser only emits EUR/USD/GBP); this is the manual path only.
+- **Fix:** tighten the shared schema once: `z.string().regex(/^[A-Za-z]{3}$/).transform(s => s.toUpperCase())` (Intl accepts any well-formed alpha-3 like `XYZ` without throwing, so this fully closes the crash).
+
+### M3 — No `Content-Security-Policy` on the served SPA *(known gap, pre-existing)*
+`server/src/app.ts:22` · Confidence: High
+
+- **Why:** `secureHeaders()` sets HSTS/nosniff/XFO but no CSP. The app is internet-exposed; the codebase currently has zero `v-html`/`innerHTML` (verified), so CSP is the *backstop*, not a live hole — but for a finance app on a public origin it's the one cheap, high-value hardening still missing.
+- **Fix:** add a strict, prod-only policy via `secureHeaders({ contentSecurityPolicy: {...} })` — e.g. `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'` (the Google Fonts `<link>` in `dashboard/index.html:7-12` must be allowlisted or self-hosted — self-hosting also removes a third-party runtime dependency). Scope it to production; Vite dev needs eval/HMR.
+
+---
+
+## 🔵 Low
+
+### L1 — `localhost:5173` stays a trusted origin in production unless `DASHBOARD_ORIGIN` is overridden
+`server/src/config.ts:17,54-57` · Confidence: High (behavior) / Low (exploitability)
+
+`DASHBOARD_ORIGIN` defaults to `http://localhost:5173` and is *always* merged into `trustedOrigins`, which feeds both Hono CORS and better-auth's Origin/CSRF check. A prod deploy that sets only `BETTER_AUTH_URL` keeps a localhost origin trusted. Not directly exploitable (a remote attacker can't make a victim's browser send `Origin: http://localhost:5173`, and `SameSite=Lax` keeps cookies off cross-site requests) — but it's a needless standing grant; a malicious local program on a user's machine could pass the Origin checks. **Fix:** when `NODE_ENV === 'production'`, drop the localhost default (require `DASHBOARD_ORIGIN`/`BETTER_AUTH_URL` explicitly — config already fail-fasts nicely).
+
+### L2 — Telegram `/status` interpolates wallet names into `parse_mode: 'Markdown'`
+`server/src/services/telegram.ts:208-216` · Confidence: High
+
+Wallet `name`/`icon` are user-controlled (≤64 chars). An unbalanced `*`, `_`, `[`, or backtick in a wallet name makes Telegram reject the message ("can't parse entities") — `/status` stays broken until the wallet is renamed. Every other message in the file is plain text; only `/status` uses Markdown (for `*${month}*`). **Fix:** drop `parse_mode` there, or escape the interpolated names (checklist 05).
+
+### L3 — Webhook parser path has no upper amount bound (the Ollama path caps at 1,000,000)
+`server/src/services/notification-parser.ts:116-127` · Confidence: High
+
+`AMOUNT` allows unbounded digits and `parseAmountToCents` does `whole * 100` with no ceiling — a notification "You paid €99999999999999999999 at X" inserts a beyond-`MAX_SAFE_INTEGER` amount (precision loss, ledger/stats pollution). Requires the webhook secret, so impact is corrupt-your-own-data; flagged for consistency with the deliberate `amount > 1_000_000` rejection in `ollama-normalizer.ts:47`. **Fix:** apply the same cap in `parseAmountToCents` (or in `parseNotification` before returning).
+
+### L4 — Deleting all wallets resurrects the 7 seed wallets on next container boot
+`docker/entrypoint.sh:16-17` + `server/src/db/seed.ts:14-19` · Confidence: High
+
+`seed.js` runs on every boot and only skips when at least one wallet exists. A user who intentionally deletes all wallets gets the demo set back after any restart/redeploy. **Fix:** gate the seed on first-run (e.g. a marker row/table, or only seed when the DB file was just created), or drop it from the entrypoint and keep `bun run db:seed` manual.
+
+### L5 — Dashboard mutation failures are silent
+e.g. `dashboard/src/views/TransactionsView.vue:69-112`, `WalletsView.vue:54-69`, `RulesView.vue:43-64` · Confidence: High
+
+`save()`/`submitCreate()` `await mutateAsync(...)` with no catch and the views render no mutation error state. Any server rejection (e.g. 400 `adjustment_requires_related_tx`, 409 duplicate rule pattern) surfaces only as an unhandled promise rejection in the console; the modal stays open with no feedback. (LoginView and UsersView do this right.) **Fix:** wrap in try/catch and show `error.value`, or render `mutation.error` in the modals.
+
+### L6 — `useWallet` captures the route param non-reactively
+`dashboard/src/views/WalletDetailView.vue:21` + `composables/useWallets.ts:16-25` · Confidence: Medium (latent)
+
+`useWallet(walletId.value)` reads the id once; the query key `['wallet', id]` is static. Today no link navigates wallet→wallet in place, so it can't misfire — but the moment one is added, the header keeps showing the previous wallet. The sibling `useTransactions(() => ...)` in the same file does it reactively. **Fix:** accept `MaybeRefOrGetter<number>` and build the key with `toValue`, like `useTransactions`/`useMonthlyStats`.
+
+### L7 — Unknown `/api/*` GETs return the SPA's `index.html` with 200 in production
+`server/src/index.ts:14` · Confidence: High (verified empirically against hono 4.12.12)
+
+The `app.get('*')` fallback is registered after the API routes, so an unmatched API GET (e.g. `/api/stats` without `/monthly`, or any typo'd path) serves HTML 200 instead of a JSON 404 — confusing for API clients, health probes, and security scans (everything "exists"). **Fix:** register a `app.get('/api/*', 404)` handler (or notFound guard) before the SPA fallback.
+
+### L8 — `cloudflared` runs `image: cloudflare/cloudflared:latest`
+`docker-compose.yml:37` · Confidence: High
+
+The ingress binary — the single security boundary in front of the origin — is unpinned; every pull may silently change it (supply-chain and regression exposure). `--no-autoupdate` is set, which makes the unpinned tag the only update channel and an uncontrolled one. **Fix:** pin a version tag (ideally digest). Same suggestion, lower stakes, for `oven/bun:1.3.12-alpine` (`Dockerfile:3`) — pin by digest.
+
+---
+
+## 🧹 Nits
+
+- `server/src/routes/webhook.ts:25-33` — the secret check runs *before* the rate limiter, so bad-secret attempts are never throttled. Guessing a 32+-char secret is infeasible, but swapping the two `.use()` lines costs nothing and also shields the timing-safe compare from floods.
+- Dead code: `budgetPeriods` table + `BudgetPeriodSchema` have no route or UI (`server/src/db/schema.ts:112-127`, `shared/src/schemas.ts:177-185`); `runPragmas()` is exported but never called (`server/src/db/index.ts:20-23`); `useUpdateTransaction` invalidates a nonexistent `['trends']` key — the real key is `['stats','trends']`, already covered by the `['stats']` prefix (`dashboard/src/composables/useTransactions.ts:46`).
+- `bun run lint` fails today: 7 Biome errors (formatting/import-order in `TransactionsView.vue`, `WalletsView.vue`, `server/scripts/ollama-eval.ts`, `scripts/qa-auth.ts`, `ollama-normalizer.ts`, plus one `noUnusedTemplateLiteral`). `bunx biome check --write .` fixes all of them.
+- `scripts/qa-auth.ts` is **untracked** — the end-to-end auth harness the project's own review process leans on isn't committed. Commit it (it contains no secrets; creds come from env/flags).
+- `USAGE.md` documents an `NGROK_URL` env var that doesn't exist in `config.ts`.
+- `dashboard/src/views/TransactionsView.vue:47,93` — `new Date().toISOString().slice(0, 16)` pre-fills the `datetime-local` input with UTC, not local time (off by the tz offset in Madrid).
+- Client hardcodes `Europe/Madrid` (`TxRow.vue:16`, `TransactionsView.vue:125`, `monthBounds` default) while the server uses `APP_TIMEZONE` — consistent today, drifts if the env var ever changes.
+- `server/src/routes/transactions.ts:82-85` — `relatedTxId` may reference the transaction itself (and chains of adjustments); harmless now, worth a guard if adjustments ever get logic.
+- `create-admin` takes the password as a CLI arg (visible in `ps`/shell history). README documents the trade-off; a hidden prompt would be nicer.
+- `ollama-normalizer.ts:109-140` logs the full notification text (`input: rawText`) at info level — financial PII persisted in container logs; consider gating behind a debug flag.
+- `tailwindcss@4.0.0-beta.7` is a beta pin (build-time only).
+- Compose hardening worth a line each: `security_opt: [no-new-privileges:true]`, `cap_drop: [ALL]`, memory/pids limits (checklist 07 "consider" items).
+
+## 👀 Worth a look (needs author context)
+
+- **better-auth rate limit `window: 60, max: 5` applies to *all* `/api/auth/*` paths per IP** (`server/src/lib/auth.ts:28-36`), including `get-session`. The router guard fires one `get-session` per hard page load — more than 5 loads/tabs in a minute from one IP can 429 the session check and bounce a logged-in user to `/login`. If observed in practice, keep `max: 5` for `/sign-in/email` via `customRules` and relax the global bucket.
+- **`crossOriginResourcePolicy: 'cross-origin'`** (`server/src/app.ts:22`) relaxes Hono's `same-origin` default for every response. No concrete exploit (SameSite=Lax keeps cookies off cross-site subresource loads), but if nothing depends on cross-origin embedding, revert to the default.
+- **Telegram auth gates on chat id, not user id** (`services/telegram.ts:12-21`). Perfect for a private chat; if `TELEGRAM_CHAT_ID` were ever pointed at a group, every member could classify/ignore transactions. Confirm it's documented as private-chat-only.
+- Telegram `classify:`/`ignore:` callbacks don't check current status (unlike the `confirm_rule` family, which uses `loadConfirmableTx`) — a stale button can reclassify an already-resolved transaction. Plausibly intended (forgiving UX + Undo); flagging the asymmetry.
+
+## ✅ Verified OK
+
+- **AuthN/AuthZ:** `requireSession` covers every data route, including bare collection paths — verified empirically that Hono's `'/api/x/*'` middleware matches `/api/x` (and `scripts/qa-auth.ts` #4 asserts it end-to-end). Sign-up disabled; admin operations go through better-auth's admin plugin (server-side role enforcement); no custom admin-only routes exist that would need a role check. Sessions: HttpOnly/Secure(prod)/SameSite cookies, no tokens in JS storage.
+- **CORS/CSRF:** explicit allowlist from `config.trustedOrigins`, `credentials: false`, exact-match origins; better-auth Origin check active; JSON-only API, no form posts.
+- **Injection:** Drizzle query-builder everywhere — zero `sql.raw`, zero string-built SQL; merchant `contains` patterns are regex-escaped (`classifier.ts:31-33`); inserts/updates build values field-by-field from Zod-validated DTOs (schemas strip unknown keys — no mass assignment); webhook body capped at 4096 chars.
+- **Webhook:** timing-safe secret compare (length-guarded), per-IP token bucket, Zod-validated body; `cf-connecting-ip` trusted only under `TRUST_PROXY`, with no published host ports to bypass the tunnel (compose uses `expose:` only).
+- **LLM path:** `OLLAMA_URL`/model from server config only (no user-controlled URL → no SSRF); system-prompt/data separation; output strictly re-parsed, type/enum/amount-bounded, then re-validated through the deterministic parser before any DB write; `AbortController` timeout + `num_predict: 80` + `temperature: 0`.
+- **XSS surface:** zero `v-html`/`innerHTML`/`eval`/`new Function`/`document.write`/`target="_blank"` in the dashboard; all interpolation escaped; `:style` bindings use object syntax with server-validated hex colors; only `VITE_API_URL` (non-secret) reaches the bundle.
+- **Secrets:** none committed (pattern scan over tracked files clean); env fail-fast Zod-validated with ≥32-char secrets and ≥12-char passwords; `.env*`/`*.db*` excluded by both `.gitignore` and `.dockerignore`; logs pass through `redact()`; prod error handler returns generic `{error, requestId}`; the previously-flagged orphaned `API_TOKEN` compose build arg is **already removed** (commit 3e0f745).
+- **Infra:** multi-stage Dockerfile, `--frozen-lockfile`, non-root runtime via su-exec drop, tini, healthchecks, `NODE_ENV=production` pinned at build *and* runtime (keeps the better-auth rate limiter on — the inlining trap is documented in code); tunnel-only ingress; Ollama reached over the private host gateway.
+- **DB:** WAL + `foreign_keys=ON` + `busy_timeout`; CHECK constraints (amount > 0, status/type enums) and UNIQUE rule pattern present in schema *and* in the committed migration SQL; money is integer cents end-to-end; month windows computed in `APP_TIMEZONE` on the server.
+- **Supply chain:** lockfile committed and current — hono 4.12.12, better-auth 1.6.9, vue 3.5.32, vite 6.4.2, grammY 1.42.0, zod 3.25.76; no known-vulnerable pins among them (vite dev-server CVEs from early 6.x don't apply: 6.4.2, and dev-only).
+- **Tests/build:** 86/86 tests pass; typecheck clean across all three workspaces.
+
+---
+
+*Generated by `/revbudget-review full` (read-only). No code was modified; this report is the only file created.*

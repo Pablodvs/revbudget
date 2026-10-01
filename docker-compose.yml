@@ -32,9 +32,22 @@ services:
       timeout: 5s
       start_period: 15s
       retries: 3
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN # entrypoint: chown -R bun:bun /app/data on fresh volumes
+      - SETUID # su-exec root -> bun
+      - SETGID # su-exec sets gid + supplementary groups
+    mem_limit: 512m
+    pids_limit: 256
 
   cloudflared:
-    image: cloudflare/cloudflared:latest
+    # Pinned tag+digest: this binary is the only ingress boundary, and
+    # --no-autoupdate makes an unpinned :latest the sole (uncontrolled) update
+    # channel. Updating is now a deliberate version bump here.
+    image: cloudflare/cloudflared:2026.6.0@sha256:ba461b8aa9c042156dbd39c38657fe7431bafa063220eab8d5330a523863da9f
     profiles: ["tunnel"]
     restart: unless-stopped
     # If TUNNEL_TOKEN is empty, cloudflared exits with a clear error. The profile
@@ -43,3 +56,11 @@ services:
     depends_on:
       app:
         condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    # Outbound-only HTTP tunnel; expect a benign "ICMP proxy disabled" log line
+    # (ping proxying would want NET_RAW).
+    cap_drop:
+      - ALL
+    mem_limit: 256m
+    pids_limit: 128

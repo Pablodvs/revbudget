@@ -13,7 +13,13 @@ const OLLAMA_MODEL = process.env.OLLAMA_MODEL ?? 'qwen2.5:3b';
 const TIMEOUT_MS = Number(process.env.OLLAMA_TIMEOUT_MS ?? 30000);
 
 type Expect =
-  | { kind: 'parses'; type: 'expense' | 'income' | 'refund'; amount: number; currency: string; merchant: string }
+  | {
+      kind: 'parses';
+      type: 'expense' | 'income' | 'refund';
+      amount: number;
+      currency: string;
+      merchant: string;
+    }
   | { kind: 'none' };
 
 type Case = { id: string; input: string; expect: Expect };
@@ -26,34 +32,70 @@ const CASES: Case[] = [
   {
     id: 'exp-01-you-paid-at',
     input: 'You paid €9.99 at NETFLIX',
-    expect: { kind: 'parses', type: 'expense', amount: c(9.99), currency: 'EUR', merchant: 'netflix' },
+    expect: {
+      kind: 'parses',
+      type: 'expense',
+      amount: c(9.99),
+      currency: 'EUR',
+      merchant: 'netflix',
+    },
   },
   {
     id: 'exp-02-paid-no-you',
     input: 'Paid £15.20 at Pret A Manger with card',
-    expect: { kind: 'parses', type: 'expense', amount: c(15.2), currency: 'GBP', merchant: 'pret a manger' },
+    expect: {
+      kind: 'parses',
+      type: 'expense',
+      amount: c(15.2),
+      currency: 'GBP',
+      merchant: 'pret a manger',
+    },
   },
   {
     id: 'exp-03-paid-at-credit-noise',
     input: 'FreshMart: 🛒 Paid €5.11 at FreshMart\nCredit available: €1,000.00',
-    expect: { kind: 'parses', type: 'expense', amount: c(5.11), currency: 'EUR', merchant: 'freshmart' },
+    expect: {
+      kind: 'parses',
+      type: 'expense',
+      amount: c(5.11),
+      currency: 'EUR',
+      merchant: 'freshmart',
+    },
   },
   {
     id: 'exp-04-paid-at-dual-currency',
     input: '🛍 Paid £11.20 (€12.94) at Smith & Sons\nAvailable credit: €2,000.00',
-    expect: { kind: 'parses', type: 'expense', amount: c(11.2), currency: 'GBP', merchant: 'smith & sons' },
+    expect: {
+      kind: 'parses',
+      type: 'expense',
+      amount: c(11.2),
+      currency: 'GBP',
+      merchant: 'smith & sons',
+    },
   },
 
   // --- INCOMING ---
   {
     id: 'inc-01-sent-you',
     input: 'ACME Corp sent you 40.00 EUR',
-    expect: { kind: 'parses', type: 'income', amount: c(40), currency: 'EUR', merchant: 'acme corp' },
+    expect: {
+      kind: 'parses',
+      type: 'income',
+      amount: c(40),
+      currency: 'EUR',
+      merchant: 'acme corp',
+    },
   },
   {
     id: 'inc-02-you-received',
     input: 'You received €1,500.00 from ACME Payroll',
-    expect: { kind: 'parses', type: 'income', amount: c(1500), currency: 'EUR', merchant: 'acme payroll' },
+    expect: {
+      kind: 'parses',
+      type: 'income',
+      amount: c(1500),
+      currency: 'EUR',
+      merchant: 'acme payroll',
+    },
   },
   {
     id: 'inc-03-received-from',
@@ -70,12 +112,24 @@ const CASES: Case[] = [
   {
     id: 'ref-02-you-were-refunded',
     input: 'You were refunded €12.99 by NETFLIX',
-    expect: { kind: 'parses', type: 'refund', amount: c(12.99), currency: 'EUR', merchant: 'netflix' },
+    expect: {
+      kind: 'parses',
+      type: 'refund',
+      amount: c(12.99),
+      currency: 'EUR',
+      merchant: 'netflix',
+    },
   },
   {
     id: 'ref-03-merchant-refunded',
     input: 'Booking.com refunded you £5.00',
-    expect: { kind: 'parses', type: 'refund', amount: c(5), currency: 'GBP', merchant: 'booking.com' },
+    expect: {
+      kind: 'parses',
+      type: 'refund',
+      amount: c(5),
+      currency: 'GBP',
+      merchant: 'booking.com',
+    },
   },
 
   // --- NONE ---
@@ -105,7 +159,12 @@ Examples:
 "Your Revolut trial ends soon" -> {"type":"none","amount":0,"currency":"EUR","merchant":""}
 Output ONLY the JSON object. No explanation.`;
 
-type JsonOut = { type: 'expense' | 'income' | 'refund' | 'none'; amount: number; currency: string; merchant: string };
+type JsonOut = {
+  type: 'expense' | 'income' | 'refund' | 'none';
+  amount: number;
+  currency: string;
+  merchant: string;
+};
 
 async function callOllamaGenJson(system: string, prompt: string): Promise<string | null> {
   const ctrl = new AbortController();
@@ -135,13 +194,17 @@ async function callOllamaGenJson(system: string, prompt: string): Promise<string
 }
 
 function parseJsonOutput(raw: string): JsonOut | null {
-  let s = raw.trim().replace(/^```(?:json)?\n?|\n?```$/g, '').trim();
+  let s = raw
+    .trim()
+    .replace(/^```(?:json)?\n?|\n?```$/g, '')
+    .trim();
   const m = s.match(/\{[\s\S]*\}/);
   if (m) s = m[0];
   try {
     const j = JSON.parse(s) as Record<string, unknown>;
     const type = j.type;
-    if (type !== 'expense' && type !== 'income' && type !== 'refund' && type !== 'none') return null;
+    if (type !== 'expense' && type !== 'income' && type !== 'refund' && type !== 'none')
+      return null;
     const amount = typeof j.amount === 'number' ? j.amount : Number(j.amount);
     if (!Number.isFinite(amount)) return null;
     const currency = String(j.currency ?? 'EUR').toUpperCase();
@@ -154,7 +217,8 @@ function parseJsonOutput(raw: string): JsonOut | null {
 
 function jsonToCanonical(j: JsonOut): string | null {
   if (j.type === 'none') return 'NONE';
-  const sym = j.currency === 'EUR' ? '€' : j.currency === 'USD' ? '$' : j.currency === 'GBP' ? '£' : '';
+  const sym =
+    j.currency === 'EUR' ? '€' : j.currency === 'USD' ? '$' : j.currency === 'GBP' ? '£' : '';
   if (!sym) return null;
   const cents = Math.round(j.amount * 100);
   if (cents <= 0) return null;
@@ -182,7 +246,7 @@ async function runEval(): Promise<Result[]> {
       if (j?.type === 'none' || !cleaned || cleaned === 'NONE') pass = true;
       else reason = `expected NONE but got ${j?.type ?? cleaned}`;
     } else if (!j) {
-      reason = `json parse failed`;
+      reason = 'json parse failed';
     } else {
       const exp = cs.expect;
       const typeOk = j.type === exp.type;
@@ -199,7 +263,13 @@ async function runEval(): Promise<Result[]> {
         reason = diff.join(', ');
       }
     }
-    out.push({ caseId: cs.id, raw: raw.replace(/\n/g, '\\n').slice(0, 160), cleaned, pass, reason });
+    out.push({
+      caseId: cs.id,
+      raw: raw.replace(/\n/g, '\\n').slice(0, 160),
+      cleaned,
+      pass,
+      reason,
+    });
   }
   return out;
 }
@@ -211,7 +281,9 @@ function summarize(results: Result[]) {
   console.log(`\n=== ${passed}/${total} (${pct}%) ===`);
   for (const r of results) {
     const tag = r.pass ? 'PASS' : 'FAIL';
-    console.log(`${tag}  ${r.caseId}  -> ${r.cleaned || '(empty)'}${r.reason ? `   [${r.reason}]` : ''}`);
+    console.log(
+      `${tag}  ${r.caseId}  -> ${r.cleaned || '(empty)'}${r.reason ? `   [${r.reason}]` : ''}`,
+    );
     if (!r.pass) console.log(`      raw: ${r.raw}`);
   }
 }

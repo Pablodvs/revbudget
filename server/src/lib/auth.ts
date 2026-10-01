@@ -31,8 +31,17 @@ export const auth = betterAuth({
     // check (its `enabled` default) reads false in the image and the limiter stays
     // off. Gate on the app's runtime config (read dynamically, never inlined).
     enabled: config.NODE_ENV === 'production',
+    // The global window/max pair does NOT govern sign-in: better-auth applies its
+    // built-in special rules (sign-in*/sign-up*/change-password*: 3 per 10s) after
+    // it. A strict global pair therefore only throttled benign paths — get-session
+    // fires on every page load, so 60/5 was 429ing a user with a few tabs open.
     window: 60,
-    max: 5,
+    max: 100,
+    customRules: {
+      // customRules is the one knob that overrides the built-in special rule.
+      // 5/min is stricter over a minute than the default's 3-per-10s bursts.
+      '/sign-in/email': { window: 60, max: 5 },
+    },
   },
   plugins: [admin()],
 });

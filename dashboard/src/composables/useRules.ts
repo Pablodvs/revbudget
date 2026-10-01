@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query';
 import type { MerchantRule, MerchantRuleCreate, MerchantRuleUpdate } from 'shared';
-import { api } from '../lib/api';
+import { api, apiError } from '../lib/api';
 
 export function useRules() {
   return useQuery({
@@ -18,7 +18,7 @@ export function useCreateRule() {
   return useMutation({
     mutationFn: async (body: MerchantRuleCreate) => {
       const res = await api.api['merchant-rules'].$post({ json: body });
-      if (!res.ok) throw new Error('create failed');
+      if (!res.ok) throw await apiError(res, 'create failed');
       return (await res.json()) as MerchantRule;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['rules'] }),
@@ -33,7 +33,7 @@ export function useUpdateRule() {
         param: { id: String(id) },
         json: patch,
       });
-      if (!res.ok) throw new Error('update failed');
+      if (!res.ok) throw await apiError(res, 'update failed');
       return (await res.json()) as MerchantRule;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['rules'] }),
@@ -47,7 +47,7 @@ export function useDeleteRule() {
       const res = await api.api['merchant-rules'][':id'].$delete({
         param: { id: String(id) },
       });
-      if (!res.ok) throw new Error('delete failed');
+      if (!res.ok) throw await apiError(res, 'delete failed');
       return true;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['rules'] }),

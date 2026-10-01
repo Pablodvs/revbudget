@@ -9,7 +9,7 @@
   --color-muted: #71717a;
 }
 
-@variant dark (&:where(.dark, .dark *));
+@custom-variant dark (&:where(.dark, .dark *));
 
 html,
 body,

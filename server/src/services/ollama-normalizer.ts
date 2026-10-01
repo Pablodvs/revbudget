@@ -27,7 +27,10 @@ type ExtractedTx = {
 };
 
 function parseJsonOutput(raw: string): ExtractedTx | null {
-  let s = raw.trim().replace(/^```(?:json)?\n?|\n?```$/g, '').trim();
+  let s = raw
+    .trim()
+    .replace(/^```(?:json)?\n?|\n?```$/g, '')
+    .trim();
   const braceMatch = s.match(/\{[\s\S]*\}/);
   if (braceMatch) s = braceMatch[0];
   let j: unknown;
@@ -74,6 +77,13 @@ export type NormalizerResult = {
   parsed: ParsedNotification;
 };
 
+// The notification text and everything derived from it (model output, canonical
+// form) is financial PII that would otherwise persist in container logs. Only
+// include it when LOG_NOTIFICATION_TEXT is explicitly enabled for debugging.
+function pii(fields: Record<string, unknown>): Record<string, unknown> {
+  return config.LOG_NOTIFICATION_TEXT ? fields : {};
+}
+
 export async function normalizeWithOllama(
   rawText: string,
   rid: string,
@@ -106,21 +116,27 @@ export async function normalizeWithOllama(
     const raw = typeof json.response === 'string' ? json.response.trim() : '';
     const tookMs = Date.now() - startedAt;
     if (!raw) {
-      log.info(rid, 'ollama_normalize_none', { tookMs, input: rawText });
+      log.info(rid, 'ollama_normalize_none', { tookMs, ...pii({ input: rawText }) });
       return null;
     }
     const extracted = parseJsonOutput(raw);
     if (!extracted) {
-      log.warn(rid, 'ollama_normalize_invalid', { tookMs, input: rawText, output: raw });
+      log.warn(rid, 'ollama_normalize_invalid', {
+        tookMs,
+        ...pii({ input: rawText, output: raw }),
+      });
       return null;
     }
     if (extracted.type === 'none') {
-      log.info(rid, 'ollama_normalize_none', { tookMs, input: rawText, raw });
+      log.info(rid, 'ollama_normalize_none', { tookMs, ...pii({ input: rawText, raw }) });
       return null;
     }
     const canonical = buildCanonical(extracted);
     if (!canonical) {
-      log.warn(rid, 'ollama_normalize_invalid', { tookMs, input: rawText, raw, extracted });
+      log.warn(rid, 'ollama_normalize_invalid', {
+        tookMs,
+        ...pii({ input: rawText, raw, extracted }),
+      });
       return null;
     }
     // Defense-in-depth: buildCanonical should always produce a string the
@@ -130,14 +146,15 @@ export async function normalizeWithOllama(
     if (!validation.ok) {
       log.warn(rid, 'ollama_normalize_invalid', {
         tookMs,
-        input: rawText,
-        raw,
-        output: canonical,
         errorCode: validation.error.code,
+        ...pii({ input: rawText, raw, output: canonical }),
       });
       return null;
     }
-    log.info(rid, 'ollama_normalize_ok', { tookMs, input: rawText, raw, output: canonical });
+    log.info(rid, 'ollama_normalize_ok', {
+      tookMs,
+      ...pii({ input: rawText, raw, output: canonical }),
+    });
     return { canonical, parsed: validation.value };
   } catch (err) {
     log.error(rid, 'ollama_normalize_failed', { err: String(err) });

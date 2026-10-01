@@ -13,3 +13,23 @@ async function customFetch(input: RequestInfo | URL, init?: RequestInit): Promis
 }
 
 export const api = hc<AppType>(baseUrl, { fetch: customFetch });
+
+// Build a mutation error that surfaces what the server said — the error code
+// from errorHandler ({ error, requestId }) or the first zod issue from a
+// zValidator 400 — instead of a generic "update failed".
+export async function apiError(res: Response, fallback: string): Promise<Error> {
+  const body = (await res.json().catch(() => null)) as {
+    error?: unknown;
+    message?: unknown;
+  } | null;
+  if (typeof body?.error === 'string') return new Error(body.error);
+  const issue = (body?.error as { issues?: Array<{ path?: unknown[]; message?: string }> } | null)
+    ?.issues?.[0];
+  if (issue?.message) {
+    return new Error(
+      issue.path?.length ? `${issue.path.join('.')}: ${issue.message}` : issue.message,
+    );
+  }
+  if (typeof body?.message === 'string') return new Error(body.message);
+  return new Error(fallback);
+}

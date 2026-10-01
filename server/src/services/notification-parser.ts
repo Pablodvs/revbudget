@@ -114,13 +114,19 @@ function normalizeMerchant(s: string): string {
 }
 
 function parseAmountToCents(raw: string): number | null {
-  const stripped = raw.replace(/[\u00A0 ]/g, '').split(',').join('');
+  const stripped = raw
+    .replace(/[\u00A0 ]/g, '')
+    .split(',')
+    .join('');
   const match = /^(\d+)(?:\.(\d{1,2}))?$/.exec(stripped);
   if (!match) return null;
   const whole = Number(match[1]);
   const fracRaw = match[2] ?? '';
   const frac = fracRaw.padEnd(2, '0').slice(0, 2);
   if (Number.isNaN(whole)) return null;
+  // Same 1,000,000 ceiling as ollama-normalizer's hallucination guard — keeps
+  // absurd notification amounts (and float precision loss) out of the ledger.
+  if (whole > 1_000_000) return null;
   const fracNum = Number(frac);
   if (Number.isNaN(fracNum)) return null;
   return whole * 100 + fracNum;

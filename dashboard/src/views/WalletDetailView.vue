@@ -18,7 +18,7 @@ const month = computed({
   set: (v) => filters.setMonth(v),
 });
 
-const wallet = useWallet(walletId.value);
+const wallet = useWallet(walletId);
 const wallets = useWallets();
 const txs = useTransactions(() => ({ month: month.value, walletId: walletId.value }));
 const update = useUpdateWallet();

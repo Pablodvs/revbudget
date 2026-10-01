@@ -37,7 +37,7 @@ revbudget/
    openssl rand -hex 32
    ```
    Paste it as `WEBHOOK_SECRET` in `.env`. The Android companion app must send the same value as the `X-Webhook-Secret` header.
-5. Get a Telegram bot token from [@BotFather](https://t.me/BotFather) and paste it into `TELEGRAM_BOT_TOKEN`. Find your chat id by sending a message to the bot and curl-ing `https://api.telegram.org/bot<TOKEN>/getUpdates` — paste the numeric `chat.id` into `TELEGRAM_CHAT_ID`. The bot will silently drop any update that doesn't match this id.
+5. Get a Telegram bot token from [@BotFather](https://t.me/BotFather) and paste it into `TELEGRAM_BOT_TOKEN`. Find your chat id by sending a message to the bot and curl-ing `https://api.telegram.org/bot<TOKEN>/getUpdates` — paste the numeric `chat.id` into `TELEGRAM_CHAT_ID`. The bot will silently drop any update that doesn't match this id. Use your **private chat** with the bot, never a group id — everyone in the chat could classify/ignore transactions.
 6. Initialize the database:
    ```bash
    bun run db:generate   # first time only — migrations are already committed
@@ -54,8 +54,9 @@ The dashboard is gated by `better-auth` cookie sessions; the management API (`/a
 Pick one:
 
 ```bash
-# CLI (recommended — leaves no plaintext password in env)
-bun run create-admin -- --email me@example.com --password '...' --role admin
+# CLI (recommended — leaves no plaintext password in env, ps, or shell history;
+# omit --password to type it at a hidden prompt)
+bun run create-admin -- --email me@example.com --role admin
 ```
 
 ```bash

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { formatCents } from 'shared';
+import { DEFAULT_TIMEZONE, formatCents } from 'shared';
 import type { Transaction, TransactionType } from 'shared';
 import { computed, ref } from 'vue';
 import Modal from '../components/Modal.vue';
@@ -37,6 +37,14 @@ const form = ref({
   relatedTxId: null as number | null,
 });
 
+// datetime-local expects local wall-clock time; a bare toISOString() prefilled
+// UTC, off by the timezone offset.
+function nowForDatetimeLocal(): string {
+  const d = new Date();
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0, 16);
+}
+
 const creating = ref(false);
 const createForm = ref({
   walletId: null as number | null,
@@ -44,9 +52,12 @@ const createForm = ref({
   merchantDisplay: '',
   description: '',
   type: 'expense' as TransactionType,
-  transactionDate: new Date().toISOString().slice(0, 16),
+  transactionDate: nowForDatetimeLocal(),
   relatedTxId: null as number | null,
 });
+
+const submitting = ref(false);
+const formError = ref<string | null>(null);
 
 const TYPE_META: Record<TransactionType, { label: string; cls: string; sign: '+' | '-' | '' }> = {
   expense: { label: 'expense', cls: 'bg-zinc-800 text-zinc-300', sign: '-' },
@@ -57,6 +68,7 @@ const TYPE_META: Record<TransactionType, { label: string; cls: string; sign: '+'
 
 function openEdit(tx: Transaction) {
   editing.value = tx;
+  formError.value = null;
   form.value = {
     walletId: tx.walletId,
     amount: tx.amount,
@@ -67,20 +79,29 @@ function openEdit(tx: Transaction) {
 }
 
 async function save() {
-  if (!editing.value) return;
-  await update.mutateAsync({
-    id: editing.value.id,
-    patch: {
-      walletId: form.value.walletId,
-      amount: Number(form.value.amount),
-      description: form.value.description || null,
-      type: form.value.type,
-      relatedTxId: form.value.type === 'expense' || form.value.type === 'income'
-        ? null
-        : form.value.relatedTxId,
-    },
-  });
-  editing.value = null;
+  if (!editing.value || submitting.value) return;
+  submitting.value = true;
+  formError.value = null;
+  try {
+    await update.mutateAsync({
+      id: editing.value.id,
+      patch: {
+        walletId: form.value.walletId,
+        amount: Number(form.value.amount),
+        description: form.value.description || null,
+        type: form.value.type,
+        relatedTxId:
+          form.value.type === 'expense' || form.value.type === 'income'
+            ? null
+            : form.value.relatedTxId,
+      },
+    });
+    editing.value = null;
+  } catch (err) {
+    formError.value = err instanceof Error ? err.message : 'update failed';
+  } finally {
+    submitting.value = false;
+  }
 }
 
 function openCreate() {
@@ -90,25 +111,35 @@ function openCreate() {
     merchantDisplay: '',
     description: '',
     type: 'expense',
-    transactionDate: new Date().toISOString().slice(0, 16),
+    transactionDate: nowForDatetimeLocal(),
     relatedTxId: null,
   };
+  formError.value = null;
   creating.value = true;
 }
 
 async function submitCreate() {
   const f = createForm.value;
   if (f.walletId == null || !f.merchantDisplay || f.amount <= 0) return;
-  await create.mutateAsync({
-    walletId: f.walletId,
-    amount: Number(f.amount),
-    type: f.type,
-    merchantDisplay: f.merchantDisplay,
-    description: f.description || null,
-    transactionDate: new Date(f.transactionDate).toISOString(),
-    relatedTxId: f.type === 'refund' || f.type === 'adjustment' ? f.relatedTxId : null,
-  });
-  creating.value = false;
+  if (submitting.value) return;
+  submitting.value = true;
+  formError.value = null;
+  try {
+    await create.mutateAsync({
+      walletId: f.walletId,
+      amount: Number(f.amount),
+      type: f.type,
+      merchantDisplay: f.merchantDisplay,
+      description: f.description || null,
+      transactionDate: new Date(f.transactionDate).toISOString(),
+      relatedTxId: f.type === 'refund' || f.type === 'adjustment' ? f.relatedTxId : null,
+    });
+    creating.value = false;
+  } catch (err) {
+    formError.value = err instanceof Error ? err.message : 'create failed';
+  } finally {
+    submitting.value = false;
+  }
 }
 
 function walletName(id: number | null): string {
@@ -122,7 +153,7 @@ function formatDate(iso: string): string {
     month: 'short',
     hour: '2-digit',
     minute: '2-digit',
-    timeZone: 'Europe/Madrid',
+    timeZone: DEFAULT_TIMEZONE,
   }).format(new Date(iso));
 }
 
@@ -291,6 +322,7 @@ function amountClass(tx: Transaction): string {
             class="mt-1 w-full rounded-md bg-zinc-900 border border-zinc-800 px-3 py-2"
           />
         </label>
+        <p v-if="formError" class="text-sm text-red-400">{{ formError }}</p>
         <div class="flex justify-end gap-2 pt-2">
           <button
             type="button"
@@ -301,7 +333,8 @@ function amountClass(tx: Transaction): string {
           </button>
           <button
             type="submit"
-            class="px-3 py-1.5 rounded-md bg-emerald-500 text-zinc-950 font-medium hover:bg-emerald-400"
+            :disabled="submitting"
+            class="px-3 py-1.5 rounded-md bg-emerald-500 text-zinc-950 font-medium hover:bg-emerald-400 disabled:opacity-50"
           >
             Save
           </button>
@@ -379,6 +412,7 @@ function amountClass(tx: Transaction): string {
             class="mt-1 w-full rounded-md bg-zinc-900 border border-zinc-800 px-3 py-2"
           />
         </label>
+        <p v-if="formError" class="text-sm text-red-400">{{ formError }}</p>
         <div class="flex justify-end gap-2 pt-2">
           <button
             type="button"
@@ -389,7 +423,8 @@ function amountClass(tx: Transaction): string {
           </button>
           <button
             type="submit"
-            class="px-3 py-1.5 rounded-md bg-emerald-500 text-zinc-950 font-medium hover:bg-emerald-400"
+            :disabled="submitting"
+            class="px-3 py-1.5 rounded-md bg-emerald-500 text-zinc-950 font-medium hover:bg-emerald-400 disabled:opacity-50"
           >
             Create
           </button>

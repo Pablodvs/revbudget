@@ -1,41 +1,59 @@
 import { z } from 'zod';
 
-const EnvSchema = z.object({
-  PORT: z.coerce.number().int().positive().default(3000),
-  DATABASE_URL: z.string().min(1),
-  TELEGRAM_BOT_TOKEN: z.string().min(10),
-  TELEGRAM_CHAT_ID: z.coerce.number().int(),
-  WEBHOOK_SECRET: z.string().min(32, 'WEBHOOK_SECRET must be at least 32 chars'),
-  BETTER_AUTH_SECRET: z.string().min(32, 'BETTER_AUTH_SECRET must be at least 32 chars'),
-  BETTER_AUTH_URL: z.string().url().optional(),
-  BOOTSTRAP_ADMIN_EMAIL: z.string().email().optional(),
-  BOOTSTRAP_ADMIN_PASSWORD: z.string().min(12).optional(),
-  TRUST_PROXY: z
-    .union([z.boolean(), z.string()])
-    .default(false)
-    .transform((v) => (typeof v === 'boolean' ? v : v === 'true' || v === '1')),
-  DASHBOARD_ORIGIN: z.string().url().default('http://localhost:5173'),
-  TRUSTED_ORIGINS: z
-    .string()
-    .optional()
-    .default('')
-    .transform((v) =>
-      v
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean),
-    )
-    .pipe(z.array(z.string().url())),
-  NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
-  APP_TIMEZONE: z.string().default('Europe/Madrid'),
-  OLLAMA_ENABLED: z
-    .union([z.boolean(), z.string()])
-    .default(true)
-    .transform((v) => (typeof v === 'boolean' ? v : v === 'true' || v === '1')),
-  OLLAMA_URL: z.string().url().default('http://localhost:11434'),
-  OLLAMA_MODEL: z.string().default('qwen2.5:3b'),
-  OLLAMA_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
-});
+const EnvSchema = z
+  .object({
+    PORT: z.coerce.number().int().positive().default(3000),
+    DATABASE_URL: z.string().min(1),
+    TELEGRAM_BOT_TOKEN: z.string().min(10),
+    TELEGRAM_CHAT_ID: z.coerce.number().int(),
+    WEBHOOK_SECRET: z.string().min(32, 'WEBHOOK_SECRET must be at least 32 chars'),
+    BETTER_AUTH_SECRET: z.string().min(32, 'BETTER_AUTH_SECRET must be at least 32 chars'),
+    BETTER_AUTH_URL: z.string().url().optional(),
+    BOOTSTRAP_ADMIN_EMAIL: z.string().email().optional(),
+    BOOTSTRAP_ADMIN_PASSWORD: z.string().min(12).optional(),
+    TRUST_PROXY: z
+      .union([z.boolean(), z.string()])
+      .default(false)
+      .transform((v) => (typeof v === 'boolean' ? v : v === 'true' || v === '1')),
+    // No default here: localhost must never be a trusted origin in production.
+    // load() applies the dev default for non-production environments.
+    DASHBOARD_ORIGIN: z.string().url().optional(),
+    TRUSTED_ORIGINS: z
+      .string()
+      .optional()
+      .default('')
+      .transform((v) =>
+        v
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean),
+      )
+      .pipe(z.array(z.string().url())),
+    NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+    APP_TIMEZONE: z.string().default('Europe/Madrid'),
+    // Include raw notification text (financial PII) in ollama-normalizer logs.
+    LOG_NOTIFICATION_TEXT: z
+      .union([z.boolean(), z.string()])
+      .default(false)
+      .transform((v) => (typeof v === 'boolean' ? v : v === 'true' || v === '1')),
+    OLLAMA_ENABLED: z
+      .union([z.boolean(), z.string()])
+      .default(true)
+      .transform((v) => (typeof v === 'boolean' ? v : v === 'true' || v === '1')),
+    OLLAMA_URL: z.string().url().default('http://localhost:11434'),
+    OLLAMA_MODEL: z.string().default('qwen2.5:3b'),
+    OLLAMA_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
+  })
+  .superRefine((data, ctx) => {
+    if (data.NODE_ENV === 'production' && !data.DASHBOARD_ORIGIN && !data.BETTER_AUTH_URL) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['DASHBOARD_ORIGIN'],
+        message:
+          'required in production (or set BETTER_AUTH_URL): the public https origin the dashboard is served from',
+      });
+    }
+  });
 
 export type AppConfig = z.infer<typeof EnvSchema> & { trustedOrigins: string[] };
 
@@ -49,13 +67,21 @@ function load(): AppConfig {
     process.exit(1);
   }
   const data = parsed.data;
+  // Dev/test convenience default only — production must be explicit (superRefine
+  // above guarantees DASHBOARD_ORIGIN or BETTER_AUTH_URL is set there).
+  const dashboardOrigin =
+    data.DASHBOARD_ORIGIN ?? (data.NODE_ENV !== 'production' ? 'http://localhost:5173' : undefined);
   // better-auth implicitly trusts its own baseURL; mirror that for Hono CORS so the
   // public origin (the tunnel host) is trusted even if DASHBOARD_ORIGIN wasn't set to it.
   const authOrigin = data.BETTER_AUTH_URL ? [new URL(data.BETTER_AUTH_URL).origin] : [];
   const trustedOrigins = Array.from(
-    new Set([data.DASHBOARD_ORIGIN, ...authOrigin, ...data.TRUSTED_ORIGINS]),
+    new Set([
+      ...(dashboardOrigin ? [dashboardOrigin] : []),
+      ...authOrigin,
+      ...data.TRUSTED_ORIGINS,
+    ]),
   );
-  return { ...data, trustedOrigins };
+  return { ...data, DASHBOARD_ORIGIN: dashboardOrigin, trustedOrigins };
 }
 
 export const config: AppConfig = load();

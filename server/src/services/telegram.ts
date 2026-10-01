@@ -211,9 +211,9 @@ bot.command('status', async (ctx) => {
     const pct = w.budget > 0 ? Math.round((spent / w.budget) * 100) : 0;
     return `${w.icon ?? ''} ${w.name}: ${formatCents(spent, w.currency)} / ${formatCents(w.budget, w.currency)} (${pct}%)`;
   });
-  await ctx.reply(`📊 *${month}*\nTotal: ${formatCents(total, 'EUR')}\n\n${lines.join('\n')}`, {
-    parse_mode: 'Markdown',
-  });
+  // Plain text like every other message: wallet names are user-controlled, and
+  // an unbalanced Markdown char in one made Telegram reject the whole reply.
+  await ctx.reply(`📊 ${month}\nTotal: ${formatCents(total, 'EUR')}\n\n${lines.join('\n')}`);
 });
 
 bot.command('wallets', async (ctx) => {

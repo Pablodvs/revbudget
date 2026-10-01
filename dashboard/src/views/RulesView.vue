@@ -13,6 +13,9 @@ const remove = useDeleteRule();
 
 const modalOpen = ref(false);
 const editing = ref<MerchantRule | null>(null);
+const submitting = ref(false);
+const formError = ref<string | null>(null);
+const listError = ref<string | null>(null);
 const form = ref({
   pattern: '',
   walletId: 0,
@@ -22,6 +25,7 @@ const form = ref({
 
 function openNew() {
   editing.value = null;
+  formError.value = null;
   form.value = {
     pattern: '',
     walletId: wallets.data.value?.[0]?.id ?? 0,
@@ -32,6 +36,7 @@ function openNew() {
 }
 function openEdit(r: MerchantRule) {
   editing.value = r;
+  formError.value = null;
   form.value = {
     pattern: r.pattern,
     walletId: r.walletId,
@@ -41,26 +46,43 @@ function openEdit(r: MerchantRule) {
   modalOpen.value = true;
 }
 async function save() {
-  if (!form.value.walletId) return;
-  if (editing.value) {
-    await update.mutateAsync({
-      id: editing.value.id,
-      patch: {
+  if (!form.value.walletId || submitting.value) return;
+  submitting.value = true;
+  formError.value = null;
+  try {
+    if (editing.value) {
+      await update.mutateAsync({
+        id: editing.value.id,
+        patch: {
+          pattern: form.value.pattern,
+          walletId: form.value.walletId,
+          matchType: form.value.matchType,
+          requireConfirmation: form.value.requireConfirmation,
+        },
+      });
+    } else {
+      await create.mutateAsync({
         pattern: form.value.pattern,
         walletId: form.value.walletId,
         matchType: form.value.matchType,
         requireConfirmation: form.value.requireConfirmation,
-      },
-    });
-  } else {
-    await create.mutateAsync({
-      pattern: form.value.pattern,
-      walletId: form.value.walletId,
-      matchType: form.value.matchType,
-      requireConfirmation: form.value.requireConfirmation,
-    });
+      });
+    }
+    modalOpen.value = false;
+  } catch (err) {
+    formError.value = err instanceof Error ? err.message : 'save failed';
+  } finally {
+    submitting.value = false;
   }
-  modalOpen.value = false;
+}
+
+async function confirmDelete(r: MerchantRule) {
+  listError.value = null;
+  try {
+    await remove.mutateAsync(r.id);
+  } catch (err) {
+    listError.value = err instanceof Error ? err.message : 'delete failed';
+  }
 }
 
 function walletName(id: number): string {
@@ -106,7 +128,7 @@ function walletName(id: number): string {
               </button>
               <button
                 class="text-xs px-2 py-1 rounded border border-rose-900/40 text-rose-400 hover:bg-rose-950/30"
-                @click="remove.mutate(r.id)"
+                @click="confirmDelete(r)"
               >
                 Delete
               </button>
@@ -118,6 +140,8 @@ function walletName(id: number): string {
         </tbody>
       </table>
     </div>
+
+    <p v-if="listError" class="text-sm text-red-400">{{ listError }}</p>
 
     <Modal :open="modalOpen" :title="editing ? 'Edit rule' : 'New rule'" @close="modalOpen = false">
       <form class="space-y-4" @submit.prevent="save">
@@ -157,6 +181,7 @@ function walletName(id: number): string {
           />
           <span class="text-zinc-300">Require confirmation on match</span>
         </label>
+        <p v-if="formError" class="text-sm text-red-400">{{ formError }}</p>
         <div class="flex justify-end gap-2 pt-2">
           <button
             type="button"
@@ -167,7 +192,8 @@ function walletName(id: number): string {
           </button>
           <button
             type="submit"
-            class="px-3 py-1.5 rounded-md bg-emerald-500 text-zinc-950 font-medium hover:bg-emerald-400"
+            :disabled="submitting"
+            class="px-3 py-1.5 rounded-md bg-emerald-500 text-zinc-950 font-medium hover:bg-emerald-400 disabled:opacity-50"
           >
             Save
           </button>

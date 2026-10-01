@@ -6,7 +6,6 @@ import {
   integer,
   sqliteTable,
   text,
-  uniqueIndex,
 } from 'drizzle-orm/sqlite-core';
 
 export * from './auth-schema';
@@ -106,23 +105,6 @@ export const merchantRules = sqliteTable(
   },
   (t) => ({
     matchCheck: check('match_type_check', sql`${t.matchType} IN ('exact','contains')`),
-  }),
-);
-
-export const budgetPeriods = sqliteTable(
-  'budget_periods',
-  {
-    id: integer('id').primaryKey({ autoIncrement: true }),
-    walletId: integer('wallet_id')
-      .notNull()
-      .references(() => wallets.id, { onDelete: 'cascade' }),
-    month: text('month').notNull(),
-    budgetOverride: integer('budget_override'),
-    notes: text('notes'),
-    createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`),
-  },
-  (t) => ({
-    walletMonthUnique: uniqueIndex('budget_periods_wallet_month_unique').on(t.walletId, t.month),
   }),
 );
 

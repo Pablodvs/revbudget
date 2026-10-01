@@ -181,6 +181,82 @@ describe('PUT /api/transactions/:id', () => {
     expect(row?.type).toBe('refund');
   });
 
+  test('editing a pending tx while leaving wallet unassigned keeps it pending', async () => {
+    const [tx] = await db
+      .insert(transactions)
+      .values({
+        walletId: null,
+        amount: 1200,
+        currency: 'EUR',
+        merchant: 'spar',
+        merchantDisplay: 'SPAR',
+        rawText: 'seed',
+        status: 'pending',
+        type: 'expense',
+        transactionDate: '2026-03-03T09:00:00Z',
+      })
+      .returning();
+    if (!tx) throw new Error('seed failed');
+
+    // The dashboard edit modal always sends walletId — null when the select is "—".
+    const res = await app.request(`/api/transactions/${tx.id}`, {
+      method: 'PUT',
+      headers: AUTH,
+      body: JSON.stringify({ walletId: null, description: 'fixed note' }),
+    });
+    expect(res.status).toBe(200);
+
+    const [row] = await db.select().from(transactions).where(eq(transactions.id, tx.id));
+    expect(row?.status).toBe('pending');
+    expect(row?.classifiedAt).toBeNull();
+    expect(row?.description).toBe('fixed note');
+  });
+
+  test('walletId null returns a classified tx to pending (unassign)', async () => {
+    const w = await seedWallet();
+    const tx = await seedTx(w.id, 'expense');
+
+    const res = await app.request(`/api/transactions/${tx.id}`, {
+      method: 'PUT',
+      headers: AUTH,
+      body: JSON.stringify({ walletId: null }),
+    });
+    expect(res.status).toBe(200);
+
+    const [row] = await db.select().from(transactions).where(eq(transactions.id, tx.id));
+    expect(row?.walletId).toBeNull();
+    expect(row?.status).toBe('pending');
+    expect(row?.classifiedAt).toBeNull();
+  });
+
+  test('walletId null with an explicit status keeps that status', async () => {
+    const w = await seedWallet();
+    const tx = await seedTx(w.id, 'expense');
+
+    const res = await app.request(`/api/transactions/${tx.id}`, {
+      method: 'PUT',
+      headers: AUTH,
+      body: JSON.stringify({ walletId: null, status: 'ignored' }),
+    });
+    expect(res.status).toBe(200);
+
+    const [row] = await db.select().from(transactions).where(eq(transactions.id, tx.id));
+    expect(row?.walletId).toBeNull();
+    expect(row?.status).toBe('ignored');
+  });
+
+  test('relatedTxId pointing at the transaction itself is rejected', async () => {
+    const w = await seedWallet();
+    const tx = await seedTx(w.id, 'refund');
+
+    const res = await app.request(`/api/transactions/${tx.id}`, {
+      method: 'PUT',
+      headers: AUTH,
+      body: JSON.stringify({ relatedTxId: tx.id }),
+    });
+    expect(res.status).toBe(400);
+  });
+
   test('patches relatedTxId and rejects non-existent target', async () => {
     const w = await seedWallet();
     const origin = await seedTx(w.id, 'expense');

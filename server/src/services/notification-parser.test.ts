@@ -41,6 +41,16 @@ describe('parseNotification', () => {
     expect(r.error.code).toBe('no_match');
   });
 
+  test('amounts above the 1,000,000 ceiling are rejected', () => {
+    const r = parseNotification('You paid €99999999999999999999 at MEGACORP', fixedDate);
+    expect(r.ok).toBe(false);
+
+    const boundary = parseNotification('You paid €1000000.00 at MEGACORP', fixedDate);
+    expect(boundary.ok).toBe(true);
+    if (!boundary.ok) return;
+    expect(boundary.value.amount).toBe(100_000_000);
+  });
+
   test('empty input returns empty error', () => {
     const r = parseNotification('   \n ', fixedDate);
     expect(r.ok).toBe(false);

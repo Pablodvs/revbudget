@@ -1,10 +1,17 @@
 export const DEFAULT_TIMEZONE = 'Europe/Madrid';
 
 export function formatCents(amount: number, currency: string): string {
-  return new Intl.NumberFormat('es-ES', {
-    style: 'currency',
-    currency,
-  }).format(amount / 100);
+  try {
+    return new Intl.NumberFormat('es-ES', {
+      style: 'currency',
+      currency,
+    }).format(amount / 100);
+  } catch {
+    // Intl throws on malformed currency codes. Schemas reject them now, but a
+    // row persisted before that fix must still render (so it can be repaired
+    // from the UI) instead of crashing every view and the Telegram /status.
+    return `${(amount / 100).toFixed(2)} ${currency}`;
+  }
 }
 
 function tzOffsetAt(date: Date, tz: string): number {

@@ -72,14 +72,25 @@ export const transactionsRoute = new Hono()
       const patch: Partial<typeof transactions.$inferInsert> = { updatedAt: now };
       if (body.walletId !== undefined) {
         patch.walletId = body.walletId;
-        patch.status = body.status ?? 'classified';
-        patch.classifiedAt = now;
+        if (body.walletId !== null) {
+          patch.status = body.status ?? 'classified';
+          patch.classifiedAt = now;
+        } else if (body.status === undefined) {
+          // Unassigning the wallet (the edit modal always sends walletId, null for
+          // "—") must not classify: a classified row with no wallet is invisible to
+          // every stats aggregation. Send it back to the pending queue instead.
+          patch.status = 'pending';
+          patch.classifiedAt = null;
+        }
       }
       if (body.amount !== undefined) patch.amount = body.amount;
       if (body.description !== undefined) patch.description = body.description;
       if (body.status !== undefined) patch.status = body.status;
       if (body.type !== undefined) patch.type = body.type;
       if (body.relatedTxId !== undefined) {
+        if (body.relatedTxId === id) {
+          throw new HTTPException(400, { message: 'related_tx_self_reference' });
+        }
         if (body.relatedTxId !== null) await assertRelatedTxExists(body.relatedTxId);
         patch.relatedTxId = body.relatedTxId;
       }

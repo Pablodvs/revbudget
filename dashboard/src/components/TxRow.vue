@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { Transaction, Wallet } from 'shared';
-import { formatCents } from 'shared';
+import { DEFAULT_TIMEZONE, formatCents } from 'shared';
 import { computed } from 'vue';
 
 const props = defineProps<{ tx: Transaction; wallets: Wallet[] }>();
@@ -13,7 +13,7 @@ const formattedDate = computed(() =>
     month: 'short',
     hour: '2-digit',
     minute: '2-digit',
-    timeZone: 'Europe/Madrid',
+    timeZone: DEFAULT_TIMEZONE,
   }).format(new Date(props.tx.transactionDate)),
 );
 </script>

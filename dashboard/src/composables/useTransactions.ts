@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query';
 import type { Transaction, TransactionCreate, TransactionUpdate } from 'shared';
 import type { MaybeRefOrGetter } from 'vue';
 import { computed, toValue } from 'vue';
-import { api } from '../lib/api';
+import { api, apiError } from '../lib/api';
 
 type Filters = {
   month?: string;
@@ -37,13 +37,12 @@ export function useUpdateTransaction() {
         param: { id: String(id) },
         json: patch,
       });
-      if (!res.ok) throw new Error('update failed');
+      if (!res.ok) throw await apiError(res, 'update failed');
       return (await res.json()) as Transaction;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['transactions'] });
       qc.invalidateQueries({ queryKey: ['stats'] });
-      qc.invalidateQueries({ queryKey: ['trends'] });
       qc.invalidateQueries({ queryKey: ['rules'] });
     },
   });
@@ -54,13 +53,12 @@ export function useCreateTransaction() {
   return useMutation({
     mutationFn: async (body: TransactionCreate) => {
       const res = await api.api.transactions.$post({ json: body });
-      if (!res.ok) throw new Error('create failed');
+      if (!res.ok) throw await apiError(res, 'create failed');
       return (await res.json()) as Transaction;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['transactions'] });
       qc.invalidateQueries({ queryKey: ['stats'] });
-      qc.invalidateQueries({ queryKey: ['trends'] });
     },
   });
 }
@@ -70,13 +68,12 @@ export function useDeleteTransaction() {
   return useMutation({
     mutationFn: async (id: number) => {
       const res = await api.api.transactions[':id'].$delete({ param: { id: String(id) } });
-      if (!res.ok) throw new Error('delete failed');
+      if (!res.ok) throw await apiError(res, 'delete failed');
       return true;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['transactions'] });
       qc.invalidateQueries({ queryKey: ['stats'] });
-      qc.invalidateQueries({ queryKey: ['trends'] });
     },
   });
 }

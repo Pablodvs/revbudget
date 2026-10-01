@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query';
 import type { Wallet, WalletCreate, WalletUpdate } from 'shared';
-import { api } from '../lib/api';
+import type { MaybeRefOrGetter } from 'vue';
+import { computed, toValue } from 'vue';
+import { api, apiError } from '../lib/api';
 
 export function useWallets() {
   return useQuery({
@@ -13,11 +15,12 @@ export function useWallets() {
   });
 }
 
-export function useWallet(id: number) {
+export function useWallet(id: MaybeRefOrGetter<number>) {
+  const key = computed(() => ['wallet', toValue(id)]);
   return useQuery({
-    queryKey: ['wallet', id],
+    queryKey: key,
     queryFn: async (): Promise<Wallet> => {
-      const res = await api.api.wallets[':id'].$get({ param: { id: String(id) } });
+      const res = await api.api.wallets[':id'].$get({ param: { id: String(toValue(id)) } });
       if (!res.ok) throw new Error('failed to fetch wallet');
       return (await res.json()) as Wallet;
     },
@@ -32,7 +35,7 @@ export function useUpdateWallet() {
         param: { id: String(id) },
         json: patch,
       });
-      if (!res.ok) throw new Error('update failed');
+      if (!res.ok) throw await apiError(res, 'update failed');
       return (await res.json()) as Wallet;
     },
     onSuccess: () => {
@@ -47,7 +50,7 @@ export function useCreateWallet() {
   return useMutation({
     mutationFn: async (body: WalletCreate) => {
       const res = await api.api.wallets.$post({ json: body });
-      if (!res.ok) throw new Error('create failed');
+      if (!res.ok) throw await apiError(res, 'create failed');
       return (await res.json()) as Wallet;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['wallets'] }),
@@ -61,7 +64,7 @@ export function useDeleteWallet() {
       const res = await api.api.wallets[':id'].$delete({
         param: { id: String(id) },
       });
-      if (!res.ok) throw new Error('delete failed');
+      if (!res.ok) throw await apiError(res, 'delete failed');
       return true;
     },
     onSuccess: () => {

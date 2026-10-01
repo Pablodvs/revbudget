@@ -19,6 +19,14 @@ export const MonthString = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Expected
 
 const HexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Expected #rrggbb');
 
+// Any well-formed alpha-3 code is accepted by Intl.NumberFormat without throwing;
+// non-alpha junk (e.g. "€12") makes formatCents throw on every render. Uppercase
+// for display consistency (Intl is case-insensitive).
+const Currency = z
+  .string()
+  .regex(/^[A-Za-z]{3}$/, 'Expected a 3-letter currency code')
+  .transform((s) => s.toUpperCase());
+
 const PositiveIntCents = z.number().int().nonnegative();
 const PositiveAmount = z.number().int().positive();
 const Id = z.number().int().positive();
@@ -39,7 +47,7 @@ export type Wallet = z.infer<typeof WalletSchema>;
 export const WalletCreateSchema = z.object({
   name: z.string().min(1).max(64),
   budget: PositiveIntCents,
-  currency: z.string().length(3).default('EUR'),
+  currency: Currency.default('EUR'),
   color: HexColor,
   icon: z.string().max(8).nullable().optional(),
   isActive: z.boolean().optional(),
@@ -97,7 +105,7 @@ export const TransactionCreateSchema = z
     merchantDisplay: z.string().min(1).max(128),
     description: z.string().max(256).nullable().optional(),
     transactionDate: z.string().datetime(),
-    currency: z.string().length(3).optional(),
+    currency: Currency.optional(),
     relatedTxId: Id.nullable().optional(),
   })
   .superRefine((val, ctx) => {
@@ -173,16 +181,6 @@ export const MerchantRuleUpdateSchema = z
     }
   });
 export type MerchantRuleUpdate = z.infer<typeof MerchantRuleUpdateSchema>;
-
-export const BudgetPeriodSchema = z.object({
-  id: Id,
-  walletId: Id,
-  month: MonthString,
-  budgetOverride: PositiveIntCents.nullable(),
-  notes: z.string().nullable(),
-  createdAt: z.string(),
-});
-export type BudgetPeriod = z.infer<typeof BudgetPeriodSchema>;
 
 export const WebhookBodySchema = z.object({
   text: z.string().min(1).max(4096),

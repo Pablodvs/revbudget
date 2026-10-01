@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { formatCents, type Wallet } from 'shared';
+import { type Wallet, formatCents } from 'shared';
 import { ref } from 'vue';
 import Modal from '../components/Modal.vue';
 import {
@@ -16,6 +16,9 @@ const remove = useDeleteWallet();
 
 const modalOpen = ref(false);
 const editing = ref<Wallet | null>(null);
+const submitting = ref(false);
+const formError = ref<string | null>(null);
+const listError = ref<string | null>(null);
 const form = ref({
   name: '',
   budget: 0,
@@ -27,6 +30,7 @@ const form = ref({
 
 function openNew() {
   editing.value = null;
+  formError.value = null;
   form.value = {
     name: '',
     budget: 0,
@@ -40,6 +44,7 @@ function openNew() {
 
 function openEdit(w: Wallet) {
   editing.value = w;
+  formError.value = null;
   form.value = {
     name: w.name,
     budget: w.budget,
@@ -52,6 +57,9 @@ function openEdit(w: Wallet) {
 }
 
 async function save() {
+  if (submitting.value) return;
+  submitting.value = true;
+  formError.value = null;
   const payload = {
     name: form.value.name,
     budget: Number(form.value.budget),
@@ -60,19 +68,31 @@ async function save() {
     icon: form.value.icon || null,
     isActive: form.value.isActive,
   };
-  if (editing.value) {
-    await update.mutateAsync({ id: editing.value.id, patch: payload });
-  } else {
-    await create.mutateAsync(payload);
+  try {
+    if (editing.value) {
+      await update.mutateAsync({ id: editing.value.id, patch: payload });
+    } else {
+      await create.mutateAsync(payload);
+    }
+    modalOpen.value = false;
+  } catch (err) {
+    formError.value = err instanceof Error ? err.message : 'save failed';
+  } finally {
+    submitting.value = false;
   }
-  modalOpen.value = false;
 }
 
-function confirmDelete(w: Wallet) {
+async function confirmDelete(w: Wallet) {
   const ok = window.confirm(
-    `Delete wallet "${w.name}"? Its merchant rules and budget periods will be removed and its transactions will be unassigned.`,
+    `Delete wallet "${w.name}"? Its merchant rules will be removed and its transactions will be unassigned.`,
   );
-  if (ok) remove.mutate(w.id);
+  if (!ok) return;
+  listError.value = null;
+  try {
+    await remove.mutateAsync(w.id);
+  } catch (err) {
+    listError.value = err instanceof Error ? err.message : 'delete failed';
+  }
 }
 </script>
 
@@ -150,6 +170,8 @@ function confirmDelete(w: Wallet) {
       </table>
     </div>
 
+    <p v-if="listError" class="text-sm text-red-400">{{ listError }}</p>
+
     <Modal
       :open="modalOpen"
       :title="editing ? 'Edit wallet' : 'New wallet'"
@@ -178,6 +200,8 @@ function confirmDelete(w: Wallet) {
             <input
               v-model="form.currency"
               maxlength="3"
+              pattern="[A-Za-z]{3}"
+              title="3-letter currency code, e.g. EUR"
               class="mt-1 w-full rounded-md bg-zinc-900 border border-zinc-800 px-3 py-2 uppercase"
             />
           </label>
@@ -204,6 +228,7 @@ function confirmDelete(w: Wallet) {
           <input v-model="form.isActive" type="checkbox" class="rounded border-zinc-800" />
           <span class="text-zinc-400">Active</span>
         </label>
+        <p v-if="formError" class="text-sm text-red-400">{{ formError }}</p>
         <div class="flex justify-end gap-2 pt-2">
           <button
             type="button"
@@ -214,7 +239,8 @@ function confirmDelete(w: Wallet) {
           </button>
           <button
             type="submit"
-            class="px-3 py-1.5 rounded-md bg-emerald-500 text-zinc-950 font-medium hover:bg-emerald-400"
+            :disabled="submitting"
+            class="px-3 py-1.5 rounded-md bg-emerald-500 text-zinc-950 font-medium hover:bg-emerald-400 disabled:opacity-50"
           >
             Save
           </button>
