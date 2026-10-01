@@ -3,18 +3,24 @@ import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { admin } from 'better-auth/plugins';
 import { config } from '../config';
 import { db } from '../db';
+import { CLIENT_IP_HEADER } from './client-ip';
 
 export const auth = betterAuth({
   database: drizzleAdapter(db, { provider: 'sqlite' }),
   secret: config.BETTER_AUTH_SECRET,
   baseURL: config.BETTER_AUTH_URL ?? config.DASHBOARD_ORIGIN,
   trustedOrigins: config.trustedOrigins,
-  // Behind Cloudflare the real client IP is in `cf-connecting-ip`; better-auth's
-  // default (`x-forwarded-for`) is empty through cloudflared, so it can't key the
-  // rate limiter and silently skips it. Mirror getClientIp's TRUST_PROXY gating.
-  ...(config.TRUST_PROXY
-    ? { advanced: { ipAddress: { ipAddressHeaders: ['cf-connecting-ip'] } } }
-    : {}),
+  advanced: {
+    // Secure + __Secure- prefix in production regardless of the base URL's scheme.
+    // Elsewhere undefined, not false: better-auth then infers it from the URL, so
+    // an https base URL still gets Secure cookies. Runtime config gate for the
+    // same reason as rateLimit.enabled below.
+    useSecureCookies: config.NODE_ENV === 'production' ? true : undefined,
+    // Key the rate limiter on getClientIp's answer (cf-connecting-ip only under
+    // TRUST_PROXY, else the socket address). better-auth's default is
+    // x-forwarded-for: empty through cloudflared, and client-supplied otherwise.
+    ipAddress: { ipAddressHeaders: [CLIENT_IP_HEADER] },
+  },
   emailAndPassword: {
     enabled: true,
     autoSignIn: false,
@@ -22,7 +28,8 @@ export const auth = betterAuth({
     minPasswordLength: 12,
   },
   session: {
-    expiresIn: 60 * 60 * 24 * 30,
+    // A week, slid forward at most once a day while in use.
+    expiresIn: 60 * 60 * 24 * 7,
     updateAge: 60 * 60 * 24,
   },
   rateLimit: {

@@ -1,3 +1,4 @@
+import { MAX_CENTS } from 'shared';
 import { config } from '../config';
 import { log } from '../lib/log';
 import { type ParsedNotification, parseNotification } from './notification-parser';
@@ -31,8 +32,11 @@ function parseJsonOutput(raw: string): ExtractedTx | null {
     .trim()
     .replace(/^```(?:json)?\n?|\n?```$/g, '')
     .trim();
-  const braceMatch = s.match(/\{[\s\S]*\}/);
-  if (braceMatch) s = braceMatch[0];
+  // Outermost {…} span; index lookups instead of /\{[\s\S]*\}/, which rescans
+  // to the end from every '{' (quadratic on brace-heavy model output).
+  const open = s.indexOf('{');
+  const close = s.lastIndexOf('}');
+  if (open !== -1 && close > open) s = s.slice(open, close + 1);
   let j: unknown;
   try {
     j = JSON.parse(s);
@@ -47,7 +51,7 @@ function parseJsonOutput(raw: string): ExtractedTx | null {
   }
   const amountNum = typeof obj.amount === 'number' ? obj.amount : Number(obj.amount);
   // Upper bound guards against hallucinated mega-amounts polluting the ledger.
-  if (!Number.isFinite(amountNum) || amountNum < 0 || amountNum > 1_000_000) return null;
+  if (!Number.isFinite(amountNum) || amountNum < 0 || amountNum * 100 > MAX_CENTS) return null;
   const curRaw = String(obj.currency ?? 'EUR').toUpperCase();
   if (curRaw !== 'EUR' && curRaw !== 'USD' && curRaw !== 'GBP') return null;
   const merchant = String(obj.merchant ?? '').trim();
@@ -151,11 +155,26 @@ export async function normalizeWithOllama(
       });
       return null;
     }
+    // The merchant is spliced into the canonical sentence verbatim, so model
+    // output like merchant "You paid €999999.00 at Rent" re-parses as a different
+    // transaction. Accept only a round trip that reproduces the extraction.
+    const reparsed = validation.value;
+    if (
+      reparsed.type !== extracted.type ||
+      reparsed.amount !== Math.round(extracted.amount * 100) ||
+      reparsed.currency !== extracted.currency
+    ) {
+      log.warn(rid, 'ollama_normalize_mismatch', {
+        tookMs,
+        ...pii({ input: rawText, raw, output: canonical }),
+      });
+      return null;
+    }
     log.info(rid, 'ollama_normalize_ok', {
       tookMs,
       ...pii({ input: rawText, raw, output: canonical }),
     });
-    return { canonical, parsed: validation.value };
+    return { canonical, parsed: reparsed };
   } catch (err) {
     log.error(rid, 'ollama_normalize_failed', { err: String(err) });
     return null;

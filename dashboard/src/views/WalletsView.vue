@@ -2,6 +2,7 @@
 import { type Wallet, formatCents } from 'shared';
 import { ref } from 'vue';
 import Modal from '../components/Modal.vue';
+import QueryState from '../components/QueryState.vue';
 import {
   useCreateWallet,
   useDeleteWallet,
@@ -19,6 +20,7 @@ const editing = ref<Wallet | null>(null);
 const submitting = ref(false);
 const formError = ref<string | null>(null);
 const listError = ref<string | null>(null);
+// budget is edited in euros; the API stores integer cents.
 const form = ref({
   name: '',
   budget: 0,
@@ -47,7 +49,7 @@ function openEdit(w: Wallet) {
   formError.value = null;
   form.value = {
     name: w.name,
-    budget: w.budget,
+    budget: w.budget / 100,
     currency: w.currency,
     color: w.color,
     icon: w.icon ?? '',
@@ -62,7 +64,7 @@ async function save() {
   formError.value = null;
   const payload = {
     name: form.value.name,
-    budget: Number(form.value.budget),
+    budget: Math.round(Number(form.value.budget) * 100),
     currency: form.value.currency,
     color: form.value.color,
     icon: form.value.icon || null,
@@ -84,7 +86,7 @@ async function save() {
 
 async function confirmDelete(w: Wallet) {
   const ok = window.confirm(
-    `Delete wallet "${w.name}"? Its merchant rules will be removed and its transactions will be unassigned.`,
+    `Delete wallet "${w.name}"? Its merchant rules will be removed and its transactions will move back to Pending.`,
   );
   if (!ok) return;
   listError.value = null;
@@ -108,7 +110,7 @@ async function confirmDelete(w: Wallet) {
       </button>
     </div>
 
-    <div class="rounded-xl border border-zinc-800 bg-zinc-950 overflow-hidden">
+    <div class="rounded-xl border border-zinc-800 bg-zinc-950 overflow-x-auto">
       <table class="w-full text-sm">
         <thead class="bg-zinc-900 text-zinc-400 text-left">
           <tr>
@@ -121,18 +123,18 @@ async function confirmDelete(w: Wallet) {
         </thead>
         <tbody class="divide-y divide-zinc-900">
           <tr v-for="w in wallets.data.value ?? []" :key="w.id" class="hover:bg-zinc-900/50">
-            <td class="px-4 py-3 font-medium">
+            <td class="px-4 py-3 font-medium whitespace-nowrap">
               <span v-if="w.icon" class="mr-2">{{ w.icon }}</span>{{ w.name }}
             </td>
             <td class="px-4 py-3 text-zinc-400 tabular-nums">
               {{ formatCents(w.budget, w.currency) }}
             </td>
-            <td class="px-4 py-3">
+            <td class="px-4 py-3 whitespace-nowrap">
               <span
                 class="inline-block h-4 w-4 rounded-full border border-zinc-800 align-middle"
                 :style="{ backgroundColor: w.color }"
               />
-              <span class="ml-2 text-zinc-500 text-xs tabular-nums">{{ w.color }}</span>
+              <span class="ml-2 text-zinc-400 text-xs tabular-nums">{{ w.color }}</span>
             </td>
             <td class="px-4 py-3">
               <span
@@ -143,12 +145,12 @@ async function confirmDelete(w: Wallet) {
               </span>
               <span
                 v-else
-                class="text-xs px-2 py-0.5 rounded border border-zinc-800 text-zinc-500"
+                class="text-xs px-2 py-0.5 rounded border border-zinc-800 text-zinc-400"
               >
                 Archived
               </span>
             </td>
-            <td class="px-4 py-3 text-right">
+            <td class="px-4 py-3 text-right whitespace-nowrap">
               <button
                 class="text-xs px-2 py-1 rounded border border-zinc-800 hover:bg-zinc-900 mr-2"
                 @click="openEdit(w)"
@@ -163,8 +165,10 @@ async function confirmDelete(w: Wallet) {
               </button>
             </td>
           </tr>
-          <tr v-if="!(wallets.data.value ?? []).length">
-            <td colspan="5" class="px-4 py-8 text-center text-zinc-500">No wallets yet</td>
+          <tr v-if="!wallets.data.value?.length">
+            <td colspan="5" class="px-4 py-8 text-center">
+              <QueryState :query="wallets" empty="No wallets yet" />
+            </td>
           </tr>
         </tbody>
       </table>
@@ -182,16 +186,21 @@ async function confirmDelete(w: Wallet) {
           <span class="text-zinc-400">Name</span>
           <input
             v-model="form.name"
+            required
             class="mt-1 w-full rounded-md bg-zinc-900 border border-zinc-800 px-3 py-2"
           />
         </label>
         <div class="grid grid-cols-2 gap-3">
           <label class="block text-sm">
-            <span class="text-zinc-400">Budget (cents)</span>
+            <span class="text-zinc-400">Monthly budget</span>
             <input
               v-model.number="form.budget"
               type="number"
               min="0"
+              max="1000000"
+              step="0.01"
+              inputmode="decimal"
+              required
               class="mt-1 w-full rounded-md bg-zinc-900 border border-zinc-800 px-3 py-2 tabular-nums"
             />
           </label>

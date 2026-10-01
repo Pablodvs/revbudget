@@ -5,7 +5,9 @@ const props = defineProps<{ spent: number; budget: number }>();
 
 const pct = computed(() => {
   if (props.budget <= 0) return 0;
-  return Math.min(100, Math.round((props.spent / props.budget) * 100));
+  // Refunds can leave a month's spend negative; width:-x% is invalid CSS and
+  // would render a full bar.
+  return Math.min(100, Math.max(0, Math.round((props.spent / props.budget) * 100)));
 });
 
 const colorClass = computed(() => {

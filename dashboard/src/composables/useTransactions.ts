@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/vue-query';
 import type { Transaction, TransactionCreate, TransactionUpdate } from 'shared';
 import type { MaybeRefOrGetter } from 'vue';
 import { computed, toValue } from 'vue';
@@ -26,6 +26,7 @@ export function useTransactions(filters: MaybeRefOrGetter<Filters>) {
       if (!res.ok) throw new Error('failed to fetch transactions');
       return (await res.json()) as Transaction[];
     },
+    placeholderData: keepPreviousData,
   });
 }
 
@@ -37,7 +38,7 @@ export function useUpdateTransaction() {
         param: { id: String(id) },
         json: patch,
       });
-      if (!res.ok) throw await apiError(res, 'update failed');
+      if (!res.ok) throw await apiError(res, "Couldn't save the transaction.");
       return (await res.json()) as Transaction;
     },
     onSuccess: () => {
@@ -53,7 +54,7 @@ export function useCreateTransaction() {
   return useMutation({
     mutationFn: async (body: TransactionCreate) => {
       const res = await api.api.transactions.$post({ json: body });
-      if (!res.ok) throw await apiError(res, 'create failed');
+      if (!res.ok) throw await apiError(res, "Couldn't create the transaction.");
       return (await res.json()) as Transaction;
     },
     onSuccess: () => {
@@ -68,7 +69,7 @@ export function useDeleteTransaction() {
   return useMutation({
     mutationFn: async (id: number) => {
       const res = await api.api.transactions[':id'].$delete({ param: { id: String(id) } });
-      if (!res.ok) throw await apiError(res, 'delete failed');
+      if (!res.ok) throw await apiError(res, "Couldn't delete the transaction.");
       return true;
     },
     onSuccess: () => {

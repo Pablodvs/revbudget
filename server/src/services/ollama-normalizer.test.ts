@@ -1,21 +1,10 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import { config as realConfig } from '../config';
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { config } from '../config';
+import { normalizeWithOllama } from './ollama-normalizer';
 
-// `mock.module` mutates Bun's global module registry for the rest of the
-// process, so any leak into other test files would yield a stripped-down
-// config object missing required fields. Spread the real config to keep
-// non-Ollama callers working if file load order changes.
-const fakeConfig = {
-  ...realConfig,
-  OLLAMA_ENABLED: true,
-  OLLAMA_URL: 'http://localhost:11434',
-  OLLAMA_MODEL: 'test-model',
-  OLLAMA_TIMEOUT_MS: 1000,
-};
-
-mock.module('../config', () => ({ config: fakeConfig }));
-
-const { normalizeWithOllama } = await import('./ollama-normalizer');
+// The real config, mutated and restored: mock.module would replace the module
+// for every test file that runs after this one.
+const originalConfig = { ...config };
 
 const originalFetch = globalThis.fetch;
 const fixedDate = new Date('2026-04-17T10:00:00Z');
@@ -28,16 +17,25 @@ function genResponse(response: string, status = 200): Response {
 }
 
 beforeEach(() => {
-  fakeConfig.OLLAMA_ENABLED = true;
+  Object.assign(config, {
+    OLLAMA_ENABLED: true,
+    OLLAMA_URL: 'http://localhost:11434',
+    OLLAMA_MODEL: 'test-model',
+    OLLAMA_TIMEOUT_MS: 1000,
+  });
 });
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
+afterAll(() => {
+  Object.assign(config, originalConfig);
+});
+
 describe('normalizeWithOllama', () => {
   test('returns null without calling fetch when disabled', async () => {
-    fakeConfig.OLLAMA_ENABLED = false;
+    config.OLLAMA_ENABLED = false;
     const fetchMock = mock(async () => new Response('{}'));
     globalThis.fetch = fetchMock as unknown as typeof fetch;
 
@@ -121,11 +119,21 @@ describe('normalizeWithOllama', () => {
     expect(out?.canonical).toBe('You paid €7.75 at AMAZON');
   });
 
+  test('extracts the JSON object from surrounding prose', async () => {
+    const fetchMock = mock(async () =>
+      genResponse('Sure! {"type":"expense","amount":3,"currency":"EUR","merchant":"Cafe"} Done.'),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const out = await normalizeWithOllama('You paid €3.00 at Cafe', 'rid', fixedDate);
+    expect(out?.canonical).toBe('You paid €3.00 at Cafe');
+  });
+
   test('returns null on HTTP 500', async () => {
     const fetchMock = mock(async () => new Response('boom', { status: 500 }));
     globalThis.fetch = fetchMock as unknown as typeof fetch;
     const out = await normalizeWithOllama('raw', 'rid3', fixedDate);
     expect(out).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   test('returns null when response is empty', async () => {
@@ -133,6 +141,7 @@ describe('normalizeWithOllama', () => {
     globalThis.fetch = fetchMock as unknown as typeof fetch;
     const out = await normalizeWithOllama('raw', 'rid4', fixedDate);
     expect(out).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   test('returns null when model classifies as none', async () => {
@@ -142,6 +151,7 @@ describe('normalizeWithOllama', () => {
     globalThis.fetch = fetchMock as unknown as typeof fetch;
     const out = await normalizeWithOllama('hello', 'rid5', fixedDate);
     expect(out).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   test('returns null when JSON output is malformed', async () => {
@@ -149,6 +159,7 @@ describe('normalizeWithOllama', () => {
     globalThis.fetch = fetchMock as unknown as typeof fetch;
     const out = await normalizeWithOllama('raw', 'rid-bad', fixedDate);
     expect(out).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   test('returns null when extracted type is unknown', async () => {
@@ -158,6 +169,7 @@ describe('normalizeWithOllama', () => {
     globalThis.fetch = fetchMock as unknown as typeof fetch;
     const out = await normalizeWithOllama('raw', 'rid-bad2', fixedDate);
     expect(out).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   test('returns null when merchant is missing for a non-none type', async () => {
@@ -167,6 +179,7 @@ describe('normalizeWithOllama', () => {
     globalThis.fetch = fetchMock as unknown as typeof fetch;
     const out = await normalizeWithOllama('raw', 'rid-nomerch', fixedDate);
     expect(out).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   test('returns null when extracted amount exceeds ceiling', async () => {
@@ -176,6 +189,45 @@ describe('normalizeWithOllama', () => {
     globalThis.fetch = fetchMock as unknown as typeof fetch;
     const out = await normalizeWithOllama('raw', 'rid-huge', fixedDate);
     expect(out).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test('rejects a merchant that re-parses as a different transaction', async () => {
+    // Canonical "You paid €999999.00 at Rent sent you €5.00" parses as a
+    // 99,999,900-cent expense, not the €5 income the model extracted.
+    const fetchMock = mock(async () =>
+      genResponse(
+        '{"type":"income","amount":5,"currency":"EUR","merchant":"You paid €999999.00 at Rent"}',
+      ),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const out = await normalizeWithOllama('raw', 'rid-inject', fixedDate);
+    expect(out).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test('rejects a round trip that only flips the type', async () => {
+    const fetchMock = mock(async () =>
+      genResponse('{"type":"income","amount":5,"currency":"EUR","merchant":"You paid €5.00 at X"}'),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const out = await normalizeWithOllama('raw', 'rid-flip', fixedDate);
+    expect(out).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test('rejects a round trip that only changes the currency', async () => {
+    // "You paid £5.00 at Foo: You paid €5.00 at Bar" re-parses as a €5.00
+    // expense at Bar: same type and amount, so only the currency check catches it.
+    const fetchMock = mock(async () =>
+      genResponse(
+        '{"type":"expense","amount":5,"currency":"GBP","merchant":"Foo: You paid €5.00 at Bar"}',
+      ),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const out = await normalizeWithOllama('raw', 'rid-currency', fixedDate);
+    expect(out).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   test('returns null on thrown error (timeout/abort)', async () => {
@@ -185,5 +237,6 @@ describe('normalizeWithOllama', () => {
     globalThis.fetch = fetchMock as unknown as typeof fetch;
     const out = await normalizeWithOllama('raw', 'rid6', fixedDate);
     expect(out).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

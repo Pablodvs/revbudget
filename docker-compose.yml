@@ -12,6 +12,8 @@ services:
       DATABASE_URL: /app/data/revbudget.db
       OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
       TRUST_PROXY: "true"
+      # env_file hands the app every .env entry; it never needs the tunnel token.
+      TUNNEL_TOKEN: ""
     extra_hosts:
       # Lets the container reach an Ollama running on the docker host.
       # Native on macOS/Windows; the host-gateway alias is what enables it on Linux.
@@ -52,7 +54,11 @@ services:
     restart: unless-stopped
     # If TUNNEL_TOKEN is empty, cloudflared exits with a clear error. The profile
     # gate means this service only starts when explicitly requested.
-    command: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN:-}
+    # The token goes in via the environment, which cloudflared reads natively:
+    # on argv it would be readable by any host user through `ps`.
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
     depends_on:
       app:
         condition: service_healthy

@@ -1,15 +1,17 @@
 <script setup lang="ts">
-import { DEFAULT_TIMEZONE, formatCents } from 'shared';
+import { formatCents, formatDateTime } from 'shared';
 import type { Transaction, TransactionType } from 'shared';
 import { computed, ref } from 'vue';
 import Modal from '../components/Modal.vue';
 import MonthNav from '../components/MonthNav.vue';
+import QueryState from '../components/QueryState.vue';
 import {
   useCreateTransaction,
   useTransactions,
   useUpdateTransaction,
 } from '../composables/useTransactions';
 import { useWallets } from '../composables/useWallets';
+import { STATUS_META } from '../lib/status';
 import { useFiltersStore } from '../stores/filters';
 
 const filters = useFiltersStore();
@@ -28,6 +30,8 @@ const txs = useTransactions(() => ({
 const update = useUpdateTransaction();
 const create = useCreateTransaction();
 
+// Amounts are edited in euros in both forms; the API takes integer cents.
+// A cleared number input leaves '' in v-model.number, hence relatedTxId || null.
 const editing = ref<Transaction | null>(null);
 const form = ref({
   walletId: null as number | null,
@@ -71,7 +75,7 @@ function openEdit(tx: Transaction) {
   formError.value = null;
   form.value = {
     walletId: tx.walletId,
-    amount: tx.amount,
+    amount: tx.amount / 100,
     description: tx.description ?? '',
     type: tx.type,
     relatedTxId: tx.relatedTxId,
@@ -87,13 +91,13 @@ async function save() {
       id: editing.value.id,
       patch: {
         walletId: form.value.walletId,
-        amount: Number(form.value.amount),
+        amount: Math.round(Number(form.value.amount) * 100),
         description: form.value.description || null,
         type: form.value.type,
         relatedTxId:
           form.value.type === 'expense' || form.value.type === 'income'
             ? null
-            : form.value.relatedTxId,
+            : form.value.relatedTxId || null,
       },
     });
     editing.value = null;
@@ -127,12 +131,12 @@ async function submitCreate() {
   try {
     await create.mutateAsync({
       walletId: f.walletId,
-      amount: Number(f.amount),
+      amount: Math.round(Number(f.amount) * 100),
       type: f.type,
       merchantDisplay: f.merchantDisplay,
       description: f.description || null,
       transactionDate: new Date(f.transactionDate).toISOString(),
-      relatedTxId: f.type === 'refund' || f.type === 'adjustment' ? f.relatedTxId : null,
+      relatedTxId: f.type === 'refund' || f.type === 'adjustment' ? f.relatedTxId || null : null,
     });
     creating.value = false;
   } catch (err) {
@@ -145,16 +149,6 @@ async function submitCreate() {
 function walletName(id: number | null): string {
   if (id == null) return '—';
   return wallets.data.value?.find((w) => w.id === id)?.name ?? '—';
-}
-
-function formatDate(iso: string): string {
-  return new Intl.DateTimeFormat('es-ES', {
-    day: '2-digit',
-    month: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-    timeZone: DEFAULT_TIMEZONE,
-  }).format(new Date(iso));
 }
 
 function signedAmount(tx: Transaction): string {
@@ -206,7 +200,7 @@ function amountClass(tx: Transaction): string {
       </select>
     </div>
 
-    <div class="rounded-xl border border-zinc-800 bg-zinc-950 overflow-hidden">
+    <div class="rounded-xl border border-zinc-800 bg-zinc-950 overflow-x-auto">
       <table class="w-full text-sm">
         <thead class="bg-zinc-900 text-zinc-400 text-left">
           <tr>
@@ -219,14 +213,24 @@ function amountClass(tx: Transaction): string {
           </tr>
         </thead>
         <tbody class="divide-y divide-zinc-900">
+          <!-- The merchant button is the keyboard/screen-reader control; the row
+               click is just a bigger target for the mouse. -->
           <tr
             v-for="tx in txs.data.value ?? []"
             :key="tx.id"
             class="hover:bg-zinc-900/50 cursor-pointer"
             @click="openEdit(tx)"
           >
-            <td class="px-4 py-3 text-zinc-500 whitespace-nowrap">{{ formatDate(tx.transactionDate) }}</td>
-            <td class="px-4 py-3 font-medium">{{ tx.merchantDisplay }}</td>
+            <td class="px-4 py-3 text-zinc-400 whitespace-nowrap">{{ formatDateTime(tx.transactionDate) }}</td>
+            <td class="px-4 py-3">
+              <button
+                type="button"
+                class="font-medium text-left hover:underline"
+                @click.stop="openEdit(tx)"
+              >
+                {{ tx.merchantDisplay }}
+              </button>
+            </td>
             <td class="px-4 py-3">
               <span class="px-2 py-0.5 rounded text-xs" :class="TYPE_META[tx.type].cls">
                 {{ TYPE_META[tx.type].label }}
@@ -234,26 +238,8 @@ function amountClass(tx: Transaction): string {
             </td>
             <td class="px-4 py-3 text-zinc-400">{{ walletName(tx.walletId) }}</td>
             <td class="px-4 py-3">
-              <span
-                v-if="tx.status === 'pending'"
-                class="px-2 py-0.5 rounded bg-amber-400/10 text-amber-300 text-xs"
-              >
-                pending
-              </span>
-              <span
-                v-else-if="tx.status === 'pending_confirmation'"
-                class="px-2 py-0.5 rounded bg-sky-400/10 text-sky-300 text-xs"
-              >
-                awaiting confirm
-              </span>
-              <span
-                v-else-if="tx.status === 'classified'"
-                class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300 text-xs"
-              >
-                classified
-              </span>
-              <span v-else class="px-2 py-0.5 rounded bg-zinc-800 text-zinc-500 text-xs">
-                ignored
+              <span class="px-2 py-0.5 rounded text-xs" :class="STATUS_META[tx.status].cls">
+                {{ STATUS_META[tx.status].label }}
               </span>
             </td>
             <td
@@ -263,8 +249,10 @@ function amountClass(tx: Transaction): string {
               {{ signedAmount(tx) }}
             </td>
           </tr>
-          <tr v-if="!(txs.data.value ?? []).length">
-            <td colspan="6" class="px-4 py-8 text-center text-zinc-500">No transactions</td>
+          <tr v-if="!txs.data.value?.length">
+            <td colspan="6" class="px-4 py-8 text-center">
+              <QueryState :query="txs" empty="No transactions" />
+            </td>
           </tr>
         </tbody>
       </table>
@@ -297,10 +285,15 @@ function amountClass(tx: Transaction): string {
           </select>
         </label>
         <label class="block text-sm">
-          <span class="text-zinc-400">Amount (cents)</span>
+          <span class="text-zinc-400">Amount</span>
           <input
             v-model.number="form.amount"
             type="number"
+            min="0.01"
+            max="1000000"
+            step="0.01"
+            inputmode="decimal"
+            required
             class="mt-1 w-full rounded-md bg-zinc-900 border border-zinc-800 px-3 py-2 tabular-nums"
           />
         </label>
@@ -308,10 +301,13 @@ function amountClass(tx: Transaction): string {
           v-if="form.type === 'refund' || form.type === 'adjustment'"
           class="block text-sm"
         >
-          <span class="text-zinc-400">Related transaction ID (optional)</span>
+          <span class="text-zinc-400">
+            Related transaction ID{{ form.type === 'refund' ? ' (optional)' : '' }}
+          </span>
           <input
             v-model.number="form.relatedTxId"
             type="number"
+            :required="form.type === 'adjustment'"
             class="mt-1 w-full rounded-md bg-zinc-900 border border-zinc-800 px-3 py-2 tabular-nums"
           />
         </label>
@@ -377,11 +373,14 @@ function amountClass(tx: Transaction): string {
           />
         </label>
         <label class="block text-sm">
-          <span class="text-zinc-400">Amount (cents)</span>
+          <span class="text-zinc-400">Amount</span>
           <input
             v-model.number="createForm.amount"
             type="number"
-            min="1"
+            min="0.01"
+            max="1000000"
+            step="0.01"
+            inputmode="decimal"
             required
             class="mt-1 w-full rounded-md bg-zinc-900 border border-zinc-800 px-3 py-2 tabular-nums"
           />
@@ -398,10 +397,13 @@ function amountClass(tx: Transaction): string {
           v-if="createForm.type === 'refund' || createForm.type === 'adjustment'"
           class="block text-sm"
         >
-          <span class="text-zinc-400">Related transaction ID (optional)</span>
+          <span class="text-zinc-400">
+            Related transaction ID{{ createForm.type === 'refund' ? ' (optional)' : '' }}
+          </span>
           <input
             v-model.number="createForm.relatedTxId"
             type="number"
+            :required="createForm.type === 'adjustment'"
             class="mt-1 w-full rounded-md bg-zinc-900 border border-zinc-800 px-3 py-2 tabular-nums"
           />
         </label>

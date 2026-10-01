@@ -42,13 +42,13 @@ const CASES: Case[] = [
   },
   {
     id: 'exp-02-paid-no-you',
-    input: 'Paid £15.20 at Pret A Manger with card',
+    input: 'Paid £15.20 at Corner Bakery with card',
     expect: {
       kind: 'parses',
       type: 'expense',
       amount: c(15.2),
       currency: 'GBP',
-      merchant: 'pret a manger',
+      merchant: 'corner bakery',
     },
   },
   {
@@ -140,7 +140,7 @@ const CASES: Case[] = [
   },
   {
     id: 'non-02-login-alert',
-    input: 'New security alert: a new login from London was detected on your Revolut account',
+    input: 'New security alert: a new login was detected on your Revolut account',
     expect: { kind: 'none' },
   },
 ];

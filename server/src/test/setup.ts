@@ -6,7 +6,9 @@ const testDir = join(tmpdir(), `revbudget-test-${process.pid}-${Date.now()}`);
 mkdirSync(testDir, { recursive: true });
 
 process.env.DATABASE_URL = join(testDir, 'test.db');
-process.env.TELEGRAM_BOT_TOKEN = '0000000000:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+// Telegram configured (fake token): suites that reach the notifier mock it, and
+// services/telegram-disabled.test.ts covers the unconfigured path.
+process.env.TELEGRAM_BOT_TOKEN = '123456789:test-bot-token';
 process.env.TELEGRAM_CHAT_ID = '123456789';
 process.env.WEBHOOK_SECRET = 'test_secret_must_be_at_least_32_chars_long';
 process.env.BETTER_AUTH_SECRET = 'test_better_auth_secret_must_be_at_least_32_chars';
@@ -21,3 +23,7 @@ process.env.APP_TIMEZONE = 'Europe/Madrid';
 // validation deterministic, including the BOOTSTRAP_ADMIN_PASSWORD length floor.
 process.env.BOOTSTRAP_ADMIN_EMAIL = 'bootstrap@test.local';
 process.env.BOOTSTRAP_ADMIN_PASSWORD = 'test-bootstrap-password';
+// Off unless a suite turns it on (webhook, ollama-normalizer): nothing may reach
+// a developer's real Ollama. No extra origins beyond the two above.
+process.env.OLLAMA_ENABLED = 'false';
+process.env.TRUSTED_ORIGINS = '';

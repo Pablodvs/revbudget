@@ -60,16 +60,20 @@ WORKDIR /app
 # can chown a freshly-mounted /app/data (Coolify-managed volumes come up
 # root-owned and would otherwise block sqlite writes), then drops to bun via
 # su-exec before running migrations and the app.
+#
+# Only /app/data belongs to bun. /app, the app code and the entrypoint stay
+# root-owned and read-only to it, so a compromised app process can't rewrite
+# the served JS, swap /app/dist for its own copy, or edit the script that runs
+# as root on the next start.
 RUN apk add --no-cache curl tini su-exec \
  && mkdir -p /app/data \
- && chown -R bun:bun /app
+ && chown bun:bun /app/data
 
 ENV NODE_ENV=production
 
-COPY --from=build --chown=bun:bun /app/dist             /app/dist
-COPY --from=build --chown=bun:bun /app/dashboard/dist   /app/dashboard/dist
-COPY --chown=bun:bun docker/entrypoint.sh               /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+COPY --from=build /app/dist                      /app/dist
+COPY --from=build /app/dashboard/dist            /app/dashboard/dist
+COPY --chmod=755 docker/entrypoint.sh            /usr/local/bin/entrypoint.sh
 
 EXPOSE 3000
 

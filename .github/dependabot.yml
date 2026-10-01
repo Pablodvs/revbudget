@@ -1,0 +1,39 @@
+version: 2
+
+# Minor and patch bumps arrive as one grouped PR per ecosystem; majors stay
+# individual PRs so each breaking change gets its own review.
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        update-types: [minor, patch]
+
+  - package-ecosystem: bun
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      bun-minor-and-patch:
+        update-types: [minor, patch]
+
+  # Dockerfile base image. It is pinned through BUN_VERSION/BUN_DIGEST build
+  # args, so also bump the bun-version in CI and packageManager in package.json.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      docker:
+        update-types: [minor, patch]
+
+  # docker-compose.yml: the tag+digest-pinned cloudflared sidecar (the only ingress).
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      docker-compose:
+        update-types: [minor, patch]

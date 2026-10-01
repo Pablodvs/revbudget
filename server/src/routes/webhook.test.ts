@@ -1,47 +1,33 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
+import { app } from '../app';
+import { config as runtimeConfig } from '../config';
+import { db } from '../db';
+import { merchantRules, parseFailures, transactions } from '../db/schema';
+import { stopRateLimitSweeper } from '../middleware/rate-limit';
+import { invalidateContainsCache } from '../services/classifier';
+import * as normalizer from '../services/ollama-normalizer';
+import * as telegram from '../services/telegram';
+import { ensureMigrated, seedWallet, truncateAll } from '../test/db';
 
-const sendClassifyPrompt = mock(async (_tx: unknown) => 1001);
-const sendConfirmation = mock(async (_tx: unknown) => undefined);
-const sendConfirmRulePrompt = mock(async (_tx: unknown) => 3003);
-const sendParseFailedPrompt = mock(async (_pf: unknown) => 2002);
-
-mock.module('../services/telegram', () => ({
-  bot: { api: { getChat: async () => ({ id: 123, type: 'private' }) } },
-  sendClassifyPrompt,
-  sendConfirmation,
-  sendConfirmRulePrompt,
-  sendParseFailedPrompt,
-}));
-
-type NormalizerResult = {
-  canonical: string;
-  parsed: {
-    type: 'expense' | 'income' | 'refund';
-    amount: number;
-    currency: string;
-    merchant: string;
-    merchantDisplay: string;
-    transactionDate: string;
-  };
-};
-
-const normalizeWithOllama = mock(
-  async (_raw: string, _rid: string, _receivedAt: Date): Promise<NormalizerResult | null> => null,
+// spyOn swaps the exports webhook.ts calls and mock.restore() in afterAll puts
+// them back: unlike mock.module, nothing leaks into the other test files.
+const sendClassifyPrompt = spyOn(telegram, 'sendClassifyPrompt').mockImplementation(
+  async () => 1001,
+);
+const sendConfirmation = spyOn(telegram, 'sendConfirmation').mockImplementation(
+  async () => undefined,
+);
+const sendConfirmRulePrompt = spyOn(telegram, 'sendConfirmRulePrompt').mockImplementation(
+  async () => 3003,
+);
+const sendParseFailedPrompt = spyOn(telegram, 'sendParseFailedPrompt').mockImplementation(
+  async () => 2002,
+);
+const normalizeWithOllama = spyOn(normalizer, 'normalizeWithOllama').mockImplementation(
+  async () => null,
 );
 
-mock.module('../services/ollama-normalizer', () => ({
-  normalizeWithOllama,
-}));
-
-const { config: runtimeConfig } = await import('../config');
 const originalOllamaEnabled = runtimeConfig.OLLAMA_ENABLED;
-
-const { app } = await import('../app');
-const { db } = await import('../db');
-const { merchantRules, parseFailures, transactions } = await import('../db/schema');
-const { invalidateContainsCache } = await import('../services/classifier');
-const { ensureMigrated, seedWallet, truncateAll } = await import('../test/db');
-const { stopRateLimitSweeper } = await import('../middleware/rate-limit');
 
 const WEBHOOK_SECRET = 'test_secret_must_be_at_least_32_chars_long';
 
@@ -51,6 +37,8 @@ beforeAll(() => {
 
 afterAll(() => {
   stopRateLimitSweeper();
+  mock.restore();
+  (runtimeConfig as { OLLAMA_ENABLED: boolean }).OLLAMA_ENABLED = originalOllamaEnabled;
 });
 
 beforeEach(async () => {
@@ -58,6 +46,7 @@ beforeEach(async () => {
   invalidateContainsCache();
   sendClassifyPrompt.mockClear();
   sendConfirmation.mockClear();
+  sendConfirmRulePrompt.mockClear();
   sendParseFailedPrompt.mockClear();
   normalizeWithOllama.mockClear();
   (runtimeConfig as { OLLAMA_ENABLED: boolean }).OLLAMA_ENABLED = originalOllamaEnabled;
@@ -91,6 +80,23 @@ describe('POST /api/webhook/revolut', () => {
       'wrong_secret_padded_to_over_32_chars_xxxx',
     );
     expect(res.status).toBe(401);
+  });
+
+  test('rate limits a whole IPv6 /64 as one client', async () => {
+    const hitFrom = (i: number) =>
+      app.request('/api/webhook/revolut', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Webhook-Secret': 'wrong_secret_padded_to_over_32_chars_xxxx',
+          'cf-connecting-ip': `2001:db8:64:64::${i.toString(16)}`,
+        },
+        body: JSON.stringify({ text: 'x' }),
+      });
+    for (let i = 1; i <= 60; i++) {
+      expect((await hitFrom(i)).status).toBe(401);
+    }
+    expect((await hitFrom(61)).status).toBe(429);
   });
 
   test('auto-classify when rule.requireConfirmation=false', async () => {
@@ -200,6 +206,38 @@ describe('POST /api/webhook/revolut', () => {
     expect(txs[0]?.rawText).toBe('💸 odd Revolut wording €15.40 MERCADONA');
     const pfs = await db.select().from(parseFailures);
     expect(pfs.length).toBe(0);
+  });
+
+  test('ollama rescue: a matching auto-classify rule still asks for confirmation', async () => {
+    (runtimeConfig as { OLLAMA_ENABLED: boolean }).OLLAMA_ENABLED = true;
+    const wallet = await seedWallet({ name: 'Food' });
+    await db.insert(merchantRules).values({
+      pattern: 'mercadona',
+      walletId: wallet.id,
+      matchType: 'exact',
+      requireConfirmation: false,
+    });
+    invalidateContainsCache();
+    const { parseNotification } = await import('../services/notification-parser');
+    normalizeWithOllama.mockImplementationOnce(async (_raw, _rid, receivedAt) => {
+      const canonical = 'You paid €15.40 at MERCADONA';
+      const validation = parseNotification(canonical, receivedAt);
+      if (!validation.ok) throw new Error('mock canonical did not parse');
+      return { canonical, parsed: validation.value };
+    });
+
+    const res = await postWebhook({ text: '💸 odd Revolut wording €15.40 MERCADONA' });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; status: string };
+    expect(body.status).toBe('pending_confirmation');
+
+    const txs = await db.select().from(transactions);
+    expect(txs.length).toBe(1);
+    expect(txs[0]?.status).toBe('pending_confirmation');
+    expect(txs[0]?.walletId).toBe(wallet.id);
+    expect(txs[0]?.classifiedAt).toBeNull();
+    expect(sendConfirmRulePrompt).toHaveBeenCalledTimes(1);
+    expect(sendConfirmation).toHaveBeenCalledTimes(0);
   });
 
   test('ollama rescue: null result falls back to parse_failed', async () => {

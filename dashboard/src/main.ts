@@ -20,6 +20,8 @@ app.use(VueQueryPlugin, {
       queries: {
         staleTime: 1000 * 30,
         refetchOnWindowFocus: false,
+        // The default 3 retries with backoff left a failed page blank for ~7s.
+        retry: 1,
       },
     },
   },

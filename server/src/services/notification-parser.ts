@@ -1,3 +1,5 @@
+import { MAX_CENTS } from 'shared';
+
 export type TransactionType = 'expense' | 'income' | 'refund';
 
 export type ParsedNotification = {
@@ -34,7 +36,10 @@ const AC_SEP = String.raw`[\s\u00A0]*`;
 // anchor lands on the trigger word or merchant name. Excludes digits so
 // merchant names starting with a digit (e.g. "3M") are preserved in
 // merchant-first matchers like "X sent you …".
-const EMOJI_PREFIX = String.raw`(?:[^\p{L}\p{N}]*)`;
+// Matched atomically (lookahead + backreference): under the `u` flag,
+// JavaScriptCore backtracks a plain greedy `[^\p{L}\p{N}]*` in O(n²) over
+// non-ASCII runs like "€€€…", and every matcher starts with it.
+const EMOJI_PREFIX = String.raw`(?=(?<lead>[^\p{L}\p{N}]*))\k<lead>`;
 
 type Matcher = {
   name: string;
@@ -124,12 +129,12 @@ function parseAmountToCents(raw: string): number | null {
   const fracRaw = match[2] ?? '';
   const frac = fracRaw.padEnd(2, '0').slice(0, 2);
   if (Number.isNaN(whole)) return null;
-  // Same 1,000,000 ceiling as ollama-normalizer's hallucination guard — keeps
-  // absurd notification amounts (and float precision loss) out of the ledger.
-  if (whole > 1_000_000) return null;
   const fracNum = Number(frac);
   if (Number.isNaN(fracNum)) return null;
-  return whole * 100 + fracNum;
+  const cents = whole * 100 + fracNum;
+  // The same €1M cap the API and ollama-normalizer enforce: keeps absurd
+  // notification amounts (and float precision loss) out of the ledger.
+  return cents > MAX_CENTS ? null : cents;
 }
 
 function resolveCurrency(token: string): string {
@@ -141,7 +146,10 @@ function resolveCurrency(token: string): string {
 const BALANCE_LINE =
   /^(?:(?:Available|Current|Remaining)\s+(?:credit|balance)|Credit\s+(?:available|remaining)|Balance(?:\s+available)?)\b/i;
 const TITLE_PREFIX = /^[^:\n]{1,60}:\s+/;
-const CURRENCY_PARENTHETICAL = /\s*\([^)]*(?:€|\$|£|EUR|USD|GBP)[^)]*\)\s*/giu;
+// Bounded on both sides of the currency: the unbounded `[^)]*…[^)]*` form
+// backtracked in O(n⁴) on inputs like "(€(€(€…" (hours at the webhook's
+// 4096-char cap). Surrounding whitespace is left to the collapse that follows.
+const CURRENCY_PARENTHETICAL = /\([^()]{0,40}(?:€|\$|£|EUR|USD|GBP)[^()]{0,40}\)/giu;
 const TRAILING_CARD = /\s+with\s+(?:your\s+|my\s+)?card(?:\s+\S+)*\s*$/i;
 
 function preprocess(input: string): string {

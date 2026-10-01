@@ -2,6 +2,7 @@
 import type { MerchantRule } from 'shared';
 import { ref } from 'vue';
 import Modal from '../components/Modal.vue';
+import QueryState from '../components/QueryState.vue';
 import { useCreateRule, useDeleteRule, useRules, useUpdateRule } from '../composables/useRules';
 import { useWallets } from '../composables/useWallets';
 
@@ -77,6 +78,7 @@ async function save() {
 }
 
 async function confirmDelete(r: MerchantRule) {
+  if (!window.confirm(`Delete the rule for "${r.pattern}"?`)) return;
   listError.value = null;
   try {
     await remove.mutateAsync(r.id);
@@ -102,7 +104,7 @@ function walletName(id: number): string {
       </button>
     </div>
 
-    <div class="rounded-xl border border-zinc-800 bg-zinc-950 overflow-hidden">
+    <div class="rounded-xl border border-zinc-800 bg-zinc-950 overflow-x-auto">
       <table class="w-full text-sm">
         <thead class="bg-zinc-900 text-zinc-400 text-left">
           <tr>
@@ -119,7 +121,7 @@ function walletName(id: number): string {
             <td class="px-4 py-3 text-zinc-400">{{ r.matchType }}</td>
             <td class="px-4 py-3 text-zinc-400">{{ walletName(r.walletId) }}</td>
             <td class="px-4 py-3 text-zinc-400">{{ r.requireConfirmation ? 'Required' : 'Auto' }}</td>
-            <td class="px-4 py-3 text-right">
+            <td class="px-4 py-3 text-right whitespace-nowrap">
               <button
                 class="text-xs px-2 py-1 rounded border border-zinc-800 hover:bg-zinc-900 mr-2"
                 @click="openEdit(r)"
@@ -134,8 +136,10 @@ function walletName(id: number): string {
               </button>
             </td>
           </tr>
-          <tr v-if="!(rules.data.value ?? []).length">
-            <td colspan="5" class="px-4 py-8 text-center text-zinc-500">No rules yet</td>
+          <tr v-if="!rules.data.value?.length">
+            <td colspan="5" class="px-4 py-8 text-center">
+              <QueryState :query="rules" empty="No rules yet" />
+            </td>
           </tr>
         </tbody>
       </table>
@@ -149,6 +153,7 @@ function walletName(id: number): string {
           <span class="text-zinc-400">Pattern (normalized)</span>
           <input
             v-model="form.pattern"
+            required
             class="mt-1 w-full rounded-md bg-zinc-900 border border-zinc-800 px-3 py-2"
           />
         </label>

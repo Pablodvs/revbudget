@@ -1,17 +1,27 @@
-import { and, eq, gte, lt, ne, sum } from 'drizzle-orm';
-import { Bot, InlineKeyboard } from 'grammy';
-import { currentMonth, formatCents, monthBounds } from 'shared';
+import { and, eq, ne } from 'drizzle-orm';
+import { Bot, Composer, InlineKeyboard } from 'grammy';
+import { currentMonth, formatCents } from 'shared';
 import { config } from '../config';
 import { db } from '../db';
 import { parseFailures, transactions, wallets } from '../db/schema';
 import { log } from '../lib/log';
-import { classifyMerchant, deleteRuleByPattern, upsertExactRule } from './classifier';
+import { classifyMerchant, classifyTransaction, unclassifyTransaction } from './classifier';
+import { formatMonthlySummary, monthlySummary } from './stats';
 
-export const bot = new Bot(config.TELEGRAM_BOT_TOKEN);
+// Handlers live on a Composer so they can be registered without a token. The
+// Bot only exists when Telegram is configured; otherwise every notifier below
+// no-ops (webhooks still store transactions) and index.ts never starts polling.
+const handlers = new Composer();
 
-bot.use(async (ctx, next) => {
+export const telegram = config.telegram && {
+  bot: new Bot(config.telegram.botToken),
+  chatId: config.telegram.chatId,
+};
+telegram?.bot.use(handlers);
+
+handlers.use(async (ctx, next) => {
   const chatId = ctx.chat?.id ?? ctx.callbackQuery?.message?.chat?.id;
-  if (chatId === undefined || chatId !== config.TELEGRAM_CHAT_ID) {
+  if (chatId === undefined || chatId !== telegram?.chatId) {
     if (ctx.callbackQuery) {
       await ctx.answerCallbackQuery({ text: 'Not authorized', show_alert: false }).catch(() => {});
     }
@@ -126,9 +136,10 @@ export async function sendClassifyPrompt(tx: {
   amount: number;
   currency: string;
 }): Promise<number | null> {
+  if (!telegram) return null;
   const kb = await buildClassifyKeyboard(tx.id);
-  const msg = await bot.api.sendMessage(
-    config.TELEGRAM_CHAT_ID,
+  const msg = await telegram.bot.api.sendMessage(
+    telegram.chatId,
     `💳 ${tx.merchantDisplay}\n${formatCents(tx.amount, tx.currency)}\n\nClassify:`,
     { reply_markup: kb },
   );
@@ -142,8 +153,9 @@ export async function sendConfirmation(tx: {
   walletName: string;
   walletIcon: string | null;
 }): Promise<void> {
-  await bot.api.sendMessage(
-    config.TELEGRAM_CHAT_ID,
+  if (!telegram) return;
+  await telegram.bot.api.sendMessage(
+    telegram.chatId,
     `✅ ${tx.merchantDisplay} ${formatCents(tx.amount, tx.currency)} → ${tx.walletName} ${tx.walletIcon ?? ''}`.trim(),
   );
 }
@@ -156,7 +168,8 @@ export async function sendConfirmRulePrompt(tx: {
   walletName: string;
   walletIcon: string | null;
 }): Promise<number | null> {
-  const msg = await bot.api.sendMessage(config.TELEGRAM_CHAT_ID, confirmRulePromptText(tx), {
+  if (!telegram) return null;
+  const msg = await telegram.bot.api.sendMessage(telegram.chatId, confirmRulePromptText(tx), {
     reply_markup: buildConfirmRuleKeyboard(tx.id),
   });
   return msg.message_id ?? null;
@@ -166,57 +179,31 @@ export async function sendParseFailedPrompt(pf: {
   id: number;
   rawText: string;
 }): Promise<number | null> {
+  if (!telegram) return null;
   const snippet = pf.rawText
     .slice(0, 500)
     .split('\n')
     .map((line) => `  ${line}`)
     .join('\n');
   const kb = new InlineKeyboard().text('🗑 Dismiss', `pf_dismiss:${pf.id}`);
-  const msg = await bot.api.sendMessage(
-    config.TELEGRAM_CHAT_ID,
+  const msg = await telegram.bot.api.sendMessage(
+    telegram.chatId,
     `⚠️ Could not parse notification:\n${snippet}`,
     { reply_markup: kb },
   );
   return msg.message_id ?? null;
 }
 
-bot.command('start', async (ctx) => {
+handlers.command('start', async (ctx) => {
   await ctx.reply('👋 RevBudget bot ready. Use /status or /wallets.');
 });
 
-bot.command('status', async (ctx) => {
-  const month = currentMonth(new Date(), config.APP_TIMEZONE);
-  const bounds = monthBounds(month, config.APP_TIMEZONE);
-  if (!bounds) return;
-  const walletRows = await db.select().from(wallets).where(eq(wallets.isActive, true));
-  const rows = await db
-    .select({
-      walletId: transactions.walletId,
-      total: sum(transactions.amount).mapWith(Number),
-    })
-    .from(transactions)
-    .where(
-      and(
-        eq(transactions.status, 'classified'),
-        gte(transactions.transactionDate, bounds.startISO),
-        lt(transactions.transactionDate, bounds.endISO),
-      ),
-    )
-    .groupBy(transactions.walletId);
-  const byWallet = new Map(rows.map((r) => [r.walletId, r.total ?? 0]));
-  let total = 0;
-  const lines = walletRows.map((w) => {
-    const spent = byWallet.get(w.id) ?? 0;
-    total += spent;
-    const pct = w.budget > 0 ? Math.round((spent / w.budget) * 100) : 0;
-    return `${w.icon ?? ''} ${w.name}: ${formatCents(spent, w.currency)} / ${formatCents(w.budget, w.currency)} (${pct}%)`;
-  });
-  // Plain text like every other message: wallet names are user-controlled, and
-  // an unbalanced Markdown char in one made Telegram reject the whole reply.
-  await ctx.reply(`📊 ${month}\nTotal: ${formatCents(total, 'EUR')}\n\n${lines.join('\n')}`);
+handlers.command('status', async (ctx) => {
+  const summary = await monthlySummary(currentMonth(new Date(), config.APP_TIMEZONE));
+  await ctx.reply(formatMonthlySummary(summary));
 });
 
-bot.command('wallets', async (ctx) => {
+handlers.command('wallets', async (ctx) => {
   const walletRows = await db.select().from(wallets).where(eq(wallets.isActive, true));
   const lines = walletRows.map(
     (w) => `${w.icon ?? ''} ${w.name} — budget ${formatCents(w.budget, w.currency)}`,
@@ -224,7 +211,7 @@ bot.command('wallets', async (ctx) => {
   await ctx.reply(lines.join('\n') || 'No active wallets');
 });
 
-bot.callbackQuery(/^classify:(\d+):(\d+)$/, async (ctx) => {
+handlers.callbackQuery(/^classify:(\d+):(\d+)$/, async (ctx) => {
   const match = ctx.match;
   if (!match) return;
   const txId = Number(match[1]);
@@ -242,14 +229,7 @@ bot.callbackQuery(/^classify:(\d+):(\d+)$/, async (ctx) => {
       await ctx.answerCallbackQuery({ text: 'Wallet not found' });
       return;
     }
-    const now = new Date().toISOString();
-    await db
-      .update(transactions)
-      .set({ walletId, status: 'classified', classifiedAt: now, updatedAt: now })
-      .where(eq(transactions.id, txId));
-    if (tx.merchant) {
-      await upsertExactRule(tx.merchant, walletId);
-    }
+    classifyTransaction(tx, walletId);
     const text =
       `✅ ${tx.merchantDisplay} ${formatCents(tx.amount, tx.currency)} → ${wallet.name} ${wallet.icon ?? ''}`.trim();
     const undoKb = new InlineKeyboard().text('↩️ Undo', `undo:${txId}`);
@@ -262,7 +242,7 @@ bot.callbackQuery(/^classify:(\d+):(\d+)$/, async (ctx) => {
   }
 });
 
-bot.callbackQuery(/^ignore:(\d+)$/, async (ctx) => {
+handlers.callbackQuery(/^ignore:(\d+)$/, async (ctx) => {
   const match = ctx.match;
   if (!match) return;
   const txId = Number(match[1]);
@@ -285,7 +265,7 @@ bot.callbackQuery(/^ignore:(\d+)$/, async (ctx) => {
   }
 });
 
-bot.callbackQuery(/^undo:(\d+)$/, async (ctx) => {
+handlers.callbackQuery(/^undo:(\d+)$/, async (ctx) => {
   const match = ctx.match;
   if (!match) return;
   const txId = Number(match[1]);
@@ -296,14 +276,7 @@ bot.callbackQuery(/^undo:(\d+)$/, async (ctx) => {
       await ctx.answerCallbackQuery({ text: 'Transaction not found' });
       return;
     }
-    if (tx.merchant) {
-      await deleteRuleByPattern(tx.merchant);
-    }
-    const now = new Date().toISOString();
-    await db
-      .update(transactions)
-      .set({ walletId: null, status: 'pending', classifiedAt: null, updatedAt: now })
-      .where(eq(transactions.id, txId));
+    unclassifyTransaction(tx);
     const kb = await buildClassifyKeyboard(txId);
     await ctx.editMessageText(
       `💳 ${tx.merchantDisplay}\n${formatCents(tx.amount, tx.currency)}\n\nClassify:`,
@@ -315,7 +288,7 @@ bot.callbackQuery(/^undo:(\d+)$/, async (ctx) => {
   }
 });
 
-bot.callbackQuery(/^confirm_rule:(\d+)$/, async (ctx) => {
+handlers.callbackQuery(/^confirm_rule:(\d+)$/, async (ctx) => {
   const match = ctx.match;
   if (!match) return;
   const txId = Number(match[1]);
@@ -340,7 +313,7 @@ bot.callbackQuery(/^confirm_rule:(\d+)$/, async (ctx) => {
   }
 });
 
-bot.callbackQuery(/^choose_other:(\d+)$/, async (ctx) => {
+handlers.callbackQuery(/^choose_other:(\d+)$/, async (ctx) => {
   const match = ctx.match;
   if (!match) return;
   const txId = Number(match[1]);
@@ -358,7 +331,7 @@ bot.callbackQuery(/^choose_other:(\d+)$/, async (ctx) => {
   }
 });
 
-bot.callbackQuery(/^confirm_back:(\d+)$/, async (ctx) => {
+handlers.callbackQuery(/^confirm_back:(\d+)$/, async (ctx) => {
   const match = ctx.match;
   if (!match) return;
   const txId = Number(match[1]);
@@ -384,7 +357,7 @@ bot.callbackQuery(/^confirm_back:(\d+)$/, async (ctx) => {
   }
 });
 
-bot.callbackQuery(/^reassign:(\d+):(\d+)$/, async (ctx) => {
+handlers.callbackQuery(/^reassign:(\d+):(\d+)$/, async (ctx) => {
   const match = ctx.match;
   if (!match) return;
   const txId = Number(match[1]);
@@ -415,7 +388,7 @@ bot.callbackQuery(/^reassign:(\d+):(\d+)$/, async (ctx) => {
   }
 });
 
-bot.callbackQuery(/^undo_confirm:(\d+)$/, async (ctx) => {
+handlers.callbackQuery(/^undo_confirm:(\d+)$/, async (ctx) => {
   const match = ctx.match;
   if (!match) return;
   const txId = Number(match[1]);
@@ -427,41 +400,30 @@ bot.callbackQuery(/^undo_confirm:(\d+)$/, async (ctx) => {
     }
     const result = await classifyMerchant(tx.merchant);
     const now = new Date().toISOString();
+    // Back to the confirm prompt this message started as, even when the rule
+    // itself would auto-classify: an LLM-rescued transaction's forced
+    // confirmation isn't stored, and after "Choose other" the rule's wallet is
+    // the one the user just turned down.
     if (result.walletId !== null && result.wallet !== null) {
-      if (result.requireConfirmation) {
-        await db
-          .update(transactions)
-          .set({
-            walletId: result.walletId,
-            status: 'pending_confirmation',
-            classifiedAt: null,
-            updatedAt: now,
-          })
-          .where(eq(transactions.id, txId));
-        await ctx.editMessageText(
-          confirmRulePromptText({
-            merchantDisplay: tx.merchantDisplay,
-            amount: tx.amount,
-            currency: tx.currency,
-            walletName: result.wallet.name,
-            walletIcon: result.wallet.icon,
-          }),
-          { reply_markup: buildConfirmRuleKeyboard(txId) },
-        );
-      } else {
-        await db
-          .update(transactions)
-          .set({
-            walletId: result.walletId,
-            status: 'classified',
-            classifiedAt: now,
-            updatedAt: now,
-          })
-          .where(eq(transactions.id, txId));
-        const text =
-          `✅ ${tx.merchantDisplay} ${formatCents(tx.amount, tx.currency)} → ${result.wallet.name} ${result.wallet.icon ?? ''}`.trim();
-        await ctx.editMessageText(text);
-      }
+      await db
+        .update(transactions)
+        .set({
+          walletId: result.walletId,
+          status: 'pending_confirmation',
+          classifiedAt: null,
+          updatedAt: now,
+        })
+        .where(eq(transactions.id, txId));
+      await ctx.editMessageText(
+        confirmRulePromptText({
+          merchantDisplay: tx.merchantDisplay,
+          amount: tx.amount,
+          currency: tx.currency,
+          walletName: result.wallet.name,
+          walletIcon: result.wallet.icon,
+        }),
+        { reply_markup: buildConfirmRuleKeyboard(txId) },
+      );
     } else {
       await db
         .update(transactions)
@@ -481,7 +443,7 @@ bot.callbackQuery(/^undo_confirm:(\d+)$/, async (ctx) => {
   }
 });
 
-bot.callbackQuery(/^pf_dismiss:(\d+)$/, async (ctx) => {
+handlers.callbackQuery(/^pf_dismiss:(\d+)$/, async (ctx) => {
   const match = ctx.match;
   if (!match) return;
   const pfId = Number(match[1]);
@@ -506,7 +468,7 @@ bot.callbackQuery(/^pf_dismiss:(\d+)$/, async (ctx) => {
   }
 });
 
-bot.catch((err) => {
+telegram?.bot.catch((err) => {
   log.error('bot', 'bot_error', {
     message: err.error instanceof Error ? err.error.message : 'unknown',
   });

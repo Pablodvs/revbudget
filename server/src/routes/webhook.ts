@@ -1,12 +1,12 @@
-import { zValidator } from '@hono/zod-validator';
 import { eq } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { WebhookBodySchema } from 'shared';
 import { config } from '../config';
 import { db } from '../db';
 import { parseFailures, transactions } from '../db/schema';
-import { getClientIp } from '../lib/client-ip';
+import { clientRateLimitKey } from '../lib/client-ip';
 import { log } from '../lib/log';
+import { validate } from '../lib/validate';
 import { rateLimit } from '../middleware/rate-limit';
 import { webhookSecret } from '../middleware/webhook-secret';
 import { classifyMerchant } from '../services/classifier';
@@ -29,21 +29,25 @@ export const webhookRoute = new Hono<{ Variables: Variables }>()
     rateLimit({
       capacity: 60,
       refillPerSecond: 1,
-      keyFn: getClientIp,
+      keyFn: clientRateLimitKey,
     }),
   )
   .use('*', webhookSecret)
-  .post('/revolut', zValidator('json', WebhookBodySchema), async (c) => {
+  .post('/revolut', validate('json', WebhookBodySchema), async (c) => {
     const rid = c.get('requestId') ?? 'unknown';
     const body = c.req.valid('json');
     const receivedAt = body.receivedAt ? new Date(body.receivedAt) : new Date();
     let parsed = parseNotification(body.text, receivedAt);
+    // LLM output is untrusted: a rescued transaction always waits for a human,
+    // even when a learned rule would otherwise auto-classify its merchant.
+    let rescued = false;
 
     if (!parsed.ok && config.OLLAMA_ENABLED) {
       const rescue = await normalizeWithOllama(body.text, rid, receivedAt);
       if (rescue) {
-        log.info(rid, 'webhook_ollama_rescued', { canonical: rescue.canonical });
+        log.info(rid, 'webhook_ollama_rescued');
         parsed = { ok: true, value: rescue.parsed };
+        rescued = true;
       }
     }
 
@@ -89,7 +93,7 @@ export const webhookRoute = new Hono<{ Variables: Variables }>()
 
     if (match.walletId !== null && match.wallet !== null) {
       const wallet = match.wallet;
-      if (match.requireConfirmation) {
+      if (match.requireConfirmation || rescued) {
         const [inserted] = await db
           .insert(transactions)
           .values({

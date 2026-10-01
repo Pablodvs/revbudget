@@ -49,6 +49,9 @@ describe('parseNotification', () => {
     expect(boundary.ok).toBe(true);
     if (!boundary.ok) return;
     expect(boundary.value.amount).toBe(100_000_000);
+
+    // The cap is in cents: the API rejects a single cent over €1M, so must the parser.
+    expect(parseNotification('You paid €1,000,000.01 at MEGACORP', fixedDate).ok).toBe(false);
   });
 
   test('empty input returns empty error', () => {
@@ -212,22 +215,22 @@ describe('parseNotification', () => {
   });
 
   test('en: trailing "with card" suffix is stripped', () => {
-    const r = parseNotification('Paid £5.00 at Tesco with card', fixedDate);
+    const r = parseNotification('Paid £5.00 at Corner Shop with card', fixedDate);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.value.type).toBe('expense');
     expect(r.value.amount).toBe(500);
     expect(r.value.currency).toBe('GBP');
-    expect(r.value.merchantDisplay).toBe('Tesco');
+    expect(r.value.merchantDisplay).toBe('Corner Shop');
   });
 
   test('en: multi-word trailer after "card" is stripped', () => {
-    const r = parseNotification('Paid £5.00 at Tesco with your card visa debit', fixedDate);
+    const r = parseNotification('Paid £5.00 at Corner Shop with your card visa debit', fixedDate);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.value.type).toBe('expense');
     expect(r.value.amount).toBe(500);
-    expect(r.value.merchantDisplay).toBe('Tesco');
+    expect(r.value.merchantDisplay).toBe('Corner Shop');
   });
 
   test('extended balance variants are filtered', () => {
@@ -260,4 +263,31 @@ describe('parseNotification', () => {
     expect(r.value.amount).toBe(123456);
     expect(r.value.type).toBe('income');
   });
+});
+
+describe('parseNotification regex complexity', () => {
+  // Pathological shapes at the webhook's 4096-char cap. Each once took from
+  // hundreds of ms to hours: the unbounded CURRENCY_PARENTHETICAL backtracked
+  // in O(n⁴), and a greedy EMOJI_PREFIX in O(n²) under the `u` flag.
+  const N = 4096;
+  const fill = (unit: string) => unit.repeat(Math.ceil(N / unit.length)).slice(0, N);
+  const cases: Record<string, string> = {
+    'unclosed currency parentheticals': fill('(€'),
+    'spaced currency parentheticals': fill('(€ '),
+    'currency-word parentheticals': fill('(EUR'),
+    'parentheticals across lines': fill('(€\n'),
+    'non-ASCII prefix run': fill('€'),
+    'emoji prefix run': fill('🎉'),
+    'repeated sent-you clauses': fill('x sent you €1 '),
+    'repeated paid-at clauses': fill('You paid €1 at '),
+    'repeated card trailers': fill(' with card x'),
+  };
+
+  for (const [name, input] of Object.entries(cases)) {
+    test(`${name} parse in under 50 ms`, () => {
+      const t0 = performance.now();
+      parseNotification(input, fixedDate);
+      expect(performance.now() - t0).toBeLessThan(50);
+    });
+  }
 });

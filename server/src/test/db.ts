@@ -1,7 +1,6 @@
-import { resolve } from 'node:path';
 import { eq } from 'drizzle-orm';
-import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 import { db } from '../db';
+import { runMigrations } from '../db/migrate';
 import {
   account,
   merchantRules,
@@ -18,8 +17,7 @@ let migrated = false;
 
 export function ensureMigrated(): void {
   if (migrated) return;
-  const migrationsFolder = resolve(import.meta.dir, '..', 'db', 'migrations');
-  migrate(db, { migrationsFolder });
+  runMigrations(db);
   migrated = true;
 }
 

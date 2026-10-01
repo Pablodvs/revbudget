@@ -1,7 +1,14 @@
 {
   "name": "revbudget",
+  "description": "Personal budget tracker that turns Revolut push notifications into classified transactions, with a Telegram bot and a Vue dashboard.",
   "private": true,
+  "license": "MIT",
+  "repository": "github:Pablodvs/revbudget",
   "type": "module",
+  "packageManager": "bun@1.3.12",
+  "engines": {
+    "bun": ">=1.2"
+  },
   "workspaces": ["shared", "server", "dashboard"],
   "scripts": {
     "dev:server": "bun --hot server/src/index.ts",
@@ -12,8 +19,10 @@
     "db:generate": "bun run --cwd server db:generate",
     "db:migrate": "bun server/src/db/migrate.ts",
     "db:seed": "bun server/src/db/seed.ts",
+    "db:seed:demo": "bun server/src/db/seed-demo.ts",
     "db:studio": "bun run --cwd server db:studio",
     "create-admin": "bun server/src/scripts/create-admin.ts",
+    "qa:auth": "bun scripts/qa-auth.ts",
     "test": "bun test",
     "lint": "bunx biome check .",
     "format": "bunx biome format --write .",

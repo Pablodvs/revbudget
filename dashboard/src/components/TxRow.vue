@@ -1,21 +1,12 @@
 <script setup lang="ts">
 import type { Transaction, Wallet } from 'shared';
-import { DEFAULT_TIMEZONE, formatCents } from 'shared';
+import { formatCents, formatDateTime } from 'shared';
 import { computed } from 'vue';
+import { STATUS_META } from '../lib/status';
 
 const props = defineProps<{ tx: Transaction; wallets: Wallet[] }>();
 
 const wallet = computed(() => props.wallets.find((w) => w.id === props.tx.walletId) ?? null);
-
-const formattedDate = computed(() =>
-  new Intl.DateTimeFormat('es-ES', {
-    day: '2-digit',
-    month: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-    timeZone: DEFAULT_TIMEZONE,
-  }).format(new Date(props.tx.transactionDate)),
-);
 </script>
 
 <template>
@@ -29,26 +20,16 @@ const formattedDate = computed(() =>
       </div>
       <div class="min-w-0">
         <div class="font-medium truncate">{{ tx.merchantDisplay }}</div>
-        <div class="text-xs text-zinc-500 truncate">
-          {{ formattedDate }}
+        <div class="text-xs text-zinc-400 truncate">
+          {{ formatDateTime(tx.transactionDate) }}
           <span v-if="wallet" class="ml-1">· {{ wallet.name }}</span>
+          <!-- Classified is the normal state, so only the exceptions get a badge. -->
           <span
-            v-if="tx.status === 'pending'"
-            class="ml-2 px-1.5 py-0.5 rounded bg-amber-400/10 text-amber-300 text-[10px]"
+            v-if="tx.status !== 'classified'"
+            class="ml-2 px-1.5 py-0.5 rounded text-[10px]"
+            :class="STATUS_META[tx.status].cls"
           >
-            pending
-          </span>
-          <span
-            v-else-if="tx.status === 'pending_confirmation'"
-            class="ml-2 px-1.5 py-0.5 rounded bg-sky-400/10 text-sky-300 text-[10px]"
-          >
-            awaiting confirm
-          </span>
-          <span
-            v-else-if="tx.status === 'ignored'"
-            class="ml-2 px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-500 text-[10px]"
-          >
-            ignored
+            {{ STATUS_META[tx.status].label }}
           </span>
         </div>
       </div>

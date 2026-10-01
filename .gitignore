@@ -1,16 +1,33 @@
+# Dependencies & build output
 node_modules
 dist
 dashboard/dist
+.vite
+coverage/
+*.log
+
+# Local data
+data/
 server/data
 server/src/data
 *.db
 *.db-journal
 *.db-wal
 *.db-shm
+
+# Secrets
 .env
-.env.local
+.env.*
+!.env.example
+
+# Local compose overrides (e.g. publishing the port for local Docker)
+docker-compose.override.yml
+
+# Editors / OS
+.vscode/
+.idea/
 .DS_Store
-*.log
-.vite
+
+# Assistant workspace
 .claude/
 tasks/

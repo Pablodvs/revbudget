@@ -1,26 +1,28 @@
 #!/usr/bin/env bun
 /**
- * QA end-to-end de autenticación — rama feat/auth.
+ * End-to-end authentication QA.
  *
- * Ejercita el flujo real de auth (better-auth 1.6.9) contra el despliegue
- * público detrás del túnel Cloudflare, validando lo que los tests unitarios no
- * pueden ver: cookie `Secure` sobre HTTPS, CORS/trustedOrigins, rutas
- * protegidas/públicas, sign-up deshabilitado, rol admin, sign-out y rate-limit.
+ * Exercises the real auth flow (better-auth) against a live deployment, e.g.
+ * the public host behind the Cloudflare Tunnel, checking what unit tests can't
+ * see: the `Secure` cookie over HTTPS, CORS/trustedOrigins, protected and public
+ * routes, disabled sign-up, the admin role, sign-out and the rate limit.
  *
- * Es un cliente HTTP puro: NO importa nada de `server/src` (eso dispararía el
- * `process.exit(1)` de config.ts por env faltante) y no se bundlea en la imagen.
+ * It is a plain HTTP client: it imports nothing from `server/src` (that would
+ * trigger config.ts's `process.exit(1)` on missing env) and is not bundled
+ * into the image.
  *
- * Uso (Bun autocarga `.env`, así que basta con definir las QA_* ahí):
- *   bun scripts/qa-auth.ts
- *   bun scripts/qa-auth.ts --url https://host --email admin@x.com --password '…'
+ * Usage (pass the QA_* variables inline; Bun would also read them from `.env`, but
+ * Docker Compose hands every .env entry to the app container):
+ *   QA_BASE_URL=https://revbudget.example.com QA_ADMIN_EMAIL=… QA_ADMIN_PASSWORD=… bun run qa:auth
+ *   bun scripts/qa-auth.ts --url https://host --email admin@example.com --password '…'
  *
  * Variables:
- *   QA_BASE_URL        URL pública del túnel, p.ej. https://revbudget.tu-dominio.com
- *   QA_ADMIN_EMAIL     email de un usuario admin existente
- *   QA_ADMIN_PASSWORD  su contraseña
- *   QA_SKIP_RATELIMIT  =1 para omitir el test de rate-limit (bloquea logins ≤60s)
+ *   QA_BASE_URL        public URL of the deployment, e.g. https://revbudget.example.com
+ *   QA_ADMIN_EMAIL     email of an existing admin user
+ *   QA_ADMIN_PASSWORD  their password
+ *   QA_SKIP_RATELIMIT  =1 to skip the rate-limit check (it locks sign-in for ≤60s)
  *
- * Sale con código ≠0 si algún check falla (apto para CI / post-deploy).
+ * Exits non-zero if any check fails (suitable for CI / post-deploy).
  */
 
 type Status = 'PASS' | 'FAIL' | 'WARN' | 'SKIP';
@@ -84,20 +86,20 @@ function parseConfig(): {
 
 function printUsageAndExit(): never {
   console.error(`
-${color(1, 'RevBudget — QA de autenticación (rama feat/auth)')}
+${color(1, 'RevBudget — authentication QA')}
 
-Faltan credenciales. Definí estas variables en .env (Bun las autocarga) o pasalas por flag:
+Missing credentials. Set these in .env (Bun autoloads it) or pass them as flags:
 
-  QA_BASE_URL        URL pública del túnel, p.ej. https://revbudget.tu-dominio.com
-  QA_ADMIN_EMAIL     email de un usuario admin existente
-  QA_ADMIN_PASSWORD  su contraseña
+  QA_BASE_URL        public URL of the deployment, e.g. https://revbudget.example.com
+  QA_ADMIN_EMAIL     email of an existing admin user
+  QA_ADMIN_PASSWORD  their password
 
-Ejemplos:
-  bun scripts/qa-auth.ts
-  bun scripts/qa-auth.ts --url https://host --email admin@x.com --password '…'
+Examples:
+  bun run qa:auth
+  bun scripts/qa-auth.ts --url https://host --email admin@example.com --password '…'
 
-Opcional:
-  QA_SKIP_RATELIMIT=1   omite el test de rate-limit (que bloquea nuevos logins ≤60s)
+Optional:
+  QA_SKIP_RATELIMIT=1   skip the rate-limit check (it locks new sign-ins for ≤60s)
 `);
   process.exit(2);
 }
@@ -105,7 +107,7 @@ Opcional:
 const { baseUrl, email, password, skipRateLimit } = parseConfig();
 if (!baseUrl || !email || !password) printUsageAndExit();
 
-// ── Cliente HTTP + cookie jar ─────────────────────────────────────────────────
+// ── HTTP client + cookie jar ──────────────────────────────────────────────────
 const jar = new Map<string, string>();
 
 function readSetCookies(res: Response): string[] {
@@ -144,8 +146,8 @@ type Res = { status: number; headers: Headers; setCookies: string[]; text: strin
 
 async function call(path: string, req: Req = {}): Promise<Res> {
   const headers: Record<string, string> = { ...req.headers };
-  // Simula al navegador: better-auth exige un Origin de confianza (CSRF) en las
-  // acciones autenticadas como sign-out. Los tests de CORS lo sobreescriben.
+  // Behave like a browser: better-auth requires a trusted Origin (CSRF) on
+  // authenticated actions such as sign-out. The CORS checks override it.
   if (headers.Origin === undefined) headers.Origin = baseUrl;
   let body: string | undefined;
   if (req.body !== undefined) {
@@ -174,14 +176,14 @@ async function call(path: string, req: Req = {}): Promise<Res> {
 }
 
 // ── Checks ────────────────────────────────────────────────────────────────────
-console.log(`\n${color(1, 'RevBudget — QA de autenticación')}  ${color(90, baseUrl)}`);
+console.log(`\n${color(1, 'RevBudget — authentication QA')}  ${color(90, baseUrl)}`);
 console.log(color(90, `  admin: ${email}\n`));
 
 // 1. HTTPS
 if (baseUrl.startsWith('https://')) {
-  pass('URL es https');
+  pass('URL is https');
 } else {
-  warn('URL no es https', 'el túnel debería servir https; la cookie Secure no se podrá validar');
+  warn('URL is not https', 'the tunnel should serve https; the Secure cookie cannot be verified');
 }
 
 // 2. Health
@@ -193,10 +195,10 @@ try {
     fail('GET /api/health', `status ${r.status}, body ${r.text.slice(0, 120)}`);
   }
 } catch (e) {
-  fail('GET /api/health', `no se pudo conectar: ${errMsg(e)}`);
+  fail('GET /api/health', `could not connect: ${errMsg(e)}`);
 }
 
-// 3. SPA servida
+// 3. SPA served
 try {
   const r = await call('/', { sendCookies: false });
   const ct = r.headers.get('content-type') ?? '';
@@ -209,7 +211,7 @@ try {
   fail('GET / (SPA)', errMsg(e));
 }
 
-// 4. Rutas protegidas sin sesión → 401
+// 4. Protected routes without a session → 401
 for (const p of [
   '/api/wallets',
   '/api/transactions',
@@ -220,52 +222,52 @@ for (const p of [
     const r = await call(p, { sendCookies: false });
     const body = isRecord(r.json) ? r.json : {};
     if (r.status === 401 && body.error === 'unauthorized') {
-      pass(`401 sin sesión ${p}`);
+      pass(`401 without session ${p}`);
     } else {
-      fail(`401 sin sesión ${p}`, `status ${r.status}, body ${r.text.slice(0, 120)}`);
+      fail(`401 without session ${p}`, `status ${r.status}, body ${r.text.slice(0, 120)}`);
     }
   } catch (e) {
-    fail(`401 sin sesión ${p}`, errMsg(e));
+    fail(`401 without session ${p}`, errMsg(e));
   }
 }
 
-// 4b. Ruta API desconocida → 404 JSON, no la SPA con 200
+// 4b. Unknown API route → JSON 404, not the SPA with a 200
 try {
   const r = await call('/api/qa-nonexistent-path', { sendCookies: false });
   const ct = r.headers.get('content-type') ?? '';
   const body = isRecord(r.json) ? r.json : {};
   if (r.status === 404 && ct.includes('application/json') && body.error === 'not_found') {
-    pass('404 JSON en /api/* desconocido');
+    pass('JSON 404 on unknown /api/*');
   } else {
     fail(
-      '404 JSON en /api/* desconocido',
+      'JSON 404 on unknown /api/*',
       `status ${r.status}, content-type ${ct || 'n/a'}, body ${r.text.slice(0, 120)}`,
     );
   }
 } catch (e) {
-  fail('404 JSON en /api/* desconocido', errMsg(e));
+  fail('JSON 404 on unknown /api/*', errMsg(e));
 }
 
-// 4c. Cabeceras de seguridad en la SPA (CSP prod-only + CORP por defecto)
+// 4c. Security headers on the SPA (prod-only CSP + default CORP)
 try {
   const r = await call('/', { sendCookies: false });
   const csp = r.headers.get('content-security-policy');
   const corp = r.headers.get('cross-origin-resource-policy');
   if (csp?.includes("default-src 'self'")) {
-    pass('CSP presente en /', `${csp.slice(0, 60)}…`);
+    pass('CSP present on /', `${csp.slice(0, 60)}…`);
   } else {
-    fail('CSP presente en /', csp ?? 'cabecera ausente');
+    fail('CSP present on /', csp ?? 'header missing');
   }
   if (corp === 'same-origin') {
     pass('CORP same-origin');
   } else {
-    warn('CORP same-origin', corp ?? 'cabecera ausente');
+    warn('CORP same-origin', corp ?? 'header missing');
   }
 } catch (e) {
-  fail('Cabeceras de seguridad en /', errMsg(e));
+  fail('Security headers on /', errMsg(e));
 }
 
-// 5. Sign-up deshabilitado (invite-only)
+// 5. Sign-up disabled (invite-only)
 try {
   const probe = `qa-signup-${Date.now()}-${Math.floor(Math.random() * 1e6)}@qa.invalid`;
   const r = await call('/api/auth/sign-up/email', {
@@ -276,32 +278,29 @@ try {
   });
   const createdSession = Boolean(findSessionCookie(r.setCookies));
   if (r.status >= 400 && !createdSession) {
-    pass('sign-up deshabilitado', `rechazado con ${r.status}`);
+    pass('sign-up disabled', `rejected with ${r.status}`);
   } else {
     fail(
-      'sign-up deshabilitado',
-      `status ${r.status}${createdSession ? ' + creó sesión' : ''} — ¡invite-only roto!`,
+      'sign-up disabled',
+      `status ${r.status}${createdSession ? ' + created a session' : ''} — invite-only is broken!`,
     );
   }
 } catch (e) {
-  fail('sign-up deshabilitado', errMsg(e));
+  fail('sign-up disabled', errMsg(e));
 }
 
-// 6. Login correcto → 200 + cookie de sesión (sign-in hit #1)
+// 6. Valid login → 200 + session cookie (sign-in hit #1)
 let loggedIn = false;
 try {
   const r = await call('/api/auth/sign-in/email', { method: 'POST', body: { email, password } });
   if (r.status === 429) {
-    warn(
-      'login admin',
-      'rate-limited (429) — esperá ~60s y reintentá; se omiten los checks con sesión',
-    );
+    warn('login admin', 'rate-limited (429) — wait ~60s and retry; skipping the session checks');
   } else if (r.status !== 200) {
     fail('login admin', `status ${r.status}, body ${r.text.slice(0, 160)}`);
   } else {
     const cookieLine = findSessionCookie(r.setCookies);
     if (!cookieLine) {
-      fail('login admin', '200 pero sin cookie de sesión en Set-Cookie');
+      fail('login admin', '200 but no session cookie in Set-Cookie');
     } else {
       loggedIn = true;
       const name = cookieLine.split('=')[0] ?? 'cookie';
@@ -309,18 +308,18 @@ try {
       const hasHttpOnly = attrs.includes('httponly');
       const hasSecure = attrs.includes('secure');
       const sameSite =
-        attrs.find((a) => a.startsWith('samesite='))?.split('=')[1] ?? '(sin SameSite)';
+        attrs.find((a) => a.startsWith('samesite='))?.split('=')[1] ?? '(no SameSite)';
       pass('login admin', `200 + cookie ${name}`);
       if (hasHttpOnly) pass('cookie HttpOnly');
-      else fail('cookie HttpOnly', `${name} sin HttpOnly — accesible vía JS (riesgo XSS)`);
+      else fail('cookie HttpOnly', `${name} without HttpOnly — readable from JS (XSS risk)`);
       if (!baseUrl.startsWith('https://')) {
-        skip('cookie Secure', 'base no es https');
+        skip('cookie Secure', 'base URL is not https');
       } else if (hasSecure) {
-        pass('cookie Secure', 'flag presente sobre https');
+        pass('cookie Secure', 'flag present over https');
       } else {
         fail(
           'cookie Secure',
-          'SIN Secure sobre https — el navegador la descartará. Poné BETTER_AUTH_URL=https://<host-túnel>',
+          'NO Secure over https — the browser will drop it. Set BETTER_AUTH_URL=https://<tunnel-host>',
         );
       }
       pass('cookie SameSite', sameSite);
@@ -330,7 +329,7 @@ try {
   fail('login admin', errMsg(e));
 }
 
-// 7. get-session → usuario admin
+// 7. get-session → admin user
 if (loggedIn) {
   try {
     const r = await call('/api/auth/get-session');
@@ -338,9 +337,9 @@ if (loggedIn) {
     const sameEmail =
       typeof user?.email === 'string' && user.email.toLowerCase() === email.toLowerCase();
     if (r.status === 200 && sameEmail) {
-      const role = typeof user?.role === 'string' ? user.role : '(sin rol)';
+      const role = typeof user?.role === 'string' ? user.role : '(no role)';
       if (role === 'admin') pass('get-session', `${email} (admin)`);
-      else warn('get-session', `sesión OK pero rol = ${role} (esperaba admin)`);
+      else warn('get-session', `session OK but role = ${role} (expected admin)`);
     } else {
       fail('get-session', `status ${r.status}, body ${r.text.slice(0, 120)}`);
     }
@@ -348,36 +347,37 @@ if (loggedIn) {
     fail('get-session', errMsg(e));
   }
 } else {
-  skip('get-session', 'sin login');
+  skip('get-session', 'not logged in');
 }
 
-// 8. Rutas protegidas con sesión → 200
+// 8. Protected routes with a session → 200
 if (loggedIn) {
   for (const p of ['/api/wallets', '/api/stats/monthly']) {
     try {
       const r = await call(p);
-      if (r.status === 200) pass(`200 con sesión ${p}`);
-      else fail(`200 con sesión ${p}`, `status ${r.status}`);
+      if (r.status === 200) pass(`200 with session ${p}`);
+      else fail(`200 with session ${p}`, `status ${r.status}`);
     } catch (e) {
-      fail(`200 con sesión ${p}`, errMsg(e));
+      fail(`200 with session ${p}`, errMsg(e));
     }
   }
 } else {
-  skip('rutas protegidas con sesión', 'sin login');
+  skip('protected routes with session', 'not logged in');
 }
 
-// 9. Endpoint admin (plugin admin)
+// 9. Admin endpoint (admin plugin)
 if (loggedIn) {
   try {
     const r = await call('/api/auth/admin/list-users?limit=1');
-    if (r.status === 200) pass('admin list-users', '200 (rol admin server-side)');
-    else if (r.status === 403) fail('admin list-users', '403 — el usuario no es admin server-side');
-    else warn('admin list-users', `status ${r.status} (¿endpoint del plugin admin distinto?)`);
+    if (r.status === 200) pass('admin list-users', '200 (admin role enforced server-side)');
+    else if (r.status === 403)
+      fail('admin list-users', '403 — the user is not an admin server-side');
+    else warn('admin list-users', `status ${r.status} (different admin plugin endpoint?)`);
   } catch (e) {
     fail('admin list-users', errMsg(e));
   }
 } else {
-  skip('admin list-users', 'sin login');
+  skip('admin list-users', 'not logged in');
 }
 
 // 10. CORS / trustedOrigins
@@ -388,23 +388,23 @@ try {
   const acaoTrusted = rTrusted.headers.get('access-control-allow-origin');
   const acaoEvil = rEvil.headers.get('access-control-allow-origin');
   if (acaoEvil === evil) {
-    fail('CORS origen no confiable', `ACAO reflejó ${evil} — trustedOrigins demasiado abierto`);
+    fail('CORS untrusted origin', `ACAO reflected ${evil} — trustedOrigins is too permissive`);
   } else {
-    pass('CORS origen no confiable', `no reflejado (ACAO=${acaoEvil ?? 'ausente'})`);
+    pass('CORS untrusted origin', `not reflected (ACAO=${acaoEvil ?? 'absent'})`);
   }
   if (acaoTrusted === baseUrl) {
-    pass('CORS origen confiable', `ACAO=${acaoTrusted}`);
+    pass('CORS trusted origin', `ACAO=${acaoTrusted}`);
   } else {
     warn(
-      'CORS origen confiable',
-      `ACAO=${acaoTrusted ?? 'ausente'} — ¿DASHBOARD_ORIGIN/TRUSTED_ORIGINS incluye ${baseUrl}?`,
+      'CORS trusted origin',
+      `ACAO=${acaoTrusted ?? 'absent'} — does DASHBOARD_ORIGIN/TRUSTED_ORIGINS include ${baseUrl}?`,
     );
   }
 } catch (e) {
   fail('CORS', errMsg(e));
 }
 
-// 11. Webhook sigue exigiendo el secret
+// 11. Webhook still requires the secret
 try {
   const r = await call('/api/webhook/revolut', {
     method: 'POST',
@@ -412,13 +412,14 @@ try {
     sendCookies: false,
     saveToJar: false,
   });
-  if (r.status === 401 || r.status === 403) pass('webhook sin secret', `rechazado con ${r.status}`);
-  else fail('webhook sin secret', `status ${r.status} — ¡debería exigir X-Webhook-Secret!`);
+  if (r.status === 401 || r.status === 403)
+    pass('webhook without secret', `rejected with ${r.status}`);
+  else fail('webhook without secret', `status ${r.status} — it should require X-Webhook-Secret!`);
 } catch (e) {
-  fail('webhook sin secret', errMsg(e));
+  fail('webhook without secret', errMsg(e));
 }
 
-// 12. Login con password incorrecta → 401 (sign-in hit #2)
+// 12. Login with a wrong password → 401 (sign-in hit #2)
 try {
   const r = await call('/api/auth/sign-in/email', {
     method: 'POST',
@@ -426,41 +427,41 @@ try {
     sendCookies: false,
     saveToJar: false,
   });
-  if (r.status === 401) pass('login password incorrecta', '401');
+  if (r.status === 401) pass('login with wrong password', '401');
   else if (r.status === 429)
-    warn('login password incorrecta', 'rate-limited (429) antes de validar');
-  else fail('login password incorrecta', `status ${r.status} (esperaba 401)`);
+    warn('login with wrong password', 'rate-limited (429) before validation');
+  else fail('login with wrong password', `status ${r.status} (expected 401)`);
 } catch (e) {
-  fail('login password incorrecta', errMsg(e));
+  fail('login with wrong password', errMsg(e));
 }
 
-// 13. Sign-out invalida la sesión server-side
+// 13. Sign-out invalidates the session server-side
 if (loggedIn) {
   try {
-    const sessionCookie = cookieHeader(); // snapshot autenticado
+    const sessionCookie = cookieHeader(); // authenticated snapshot
     const out = await call('/api/auth/sign-out', { method: 'POST' });
     const reuse = await call('/api/wallets', {
       sendCookies: false,
       headers: { Cookie: sessionCookie },
     });
     if (out.status === 200 && reuse.status === 401) {
-      pass('sign-out invalida sesión', 'reusar la cookie → 401');
+      pass('sign-out invalidates session', 'reusing the cookie → 401');
     } else {
-      fail('sign-out invalida sesión', `sign-out ${out.status}, reuso ${reuse.status}`);
+      fail('sign-out invalidates session', `sign-out ${out.status}, reuse ${reuse.status}`);
     }
   } catch (e) {
-    fail('sign-out invalida sesión', errMsg(e));
+    fail('sign-out invalidates session', errMsg(e));
   }
 } else {
-  skip('sign-out', 'sin login');
+  skip('sign-out', 'not logged in');
 }
 
-// 14. Rate-limit (último: bloquea nuevos logins ≤60s)
+// 14. Rate limit (last: locks new sign-ins for ≤60s)
 if (skipRateLimit) {
-  skip('rate-limit', 'QA_SKIP_RATELIMIT activo');
+  skip('rate-limit', 'QA_SKIP_RATELIMIT is set');
 } else {
   try {
-    console.log(color(90, '  … ráfaga de sign-ins (bloqueará nuevos logins ~60s)'));
+    console.log(color(90, '  … burst of sign-ins (will lock new sign-ins for ~60s)'));
     let got429 = false;
     let attempts = 0;
     for (let i = 0; i < 8 && !got429; i++) {
@@ -473,26 +474,26 @@ if (skipRateLimit) {
       });
       if (r.status === 429) got429 = true;
     }
-    if (got429) pass('rate-limit', `429 tras ${attempts} intentos`);
-    else warn('rate-limit', 'nunca devolvió 429 en 8 intentos (¿rate-limit desactivado?)');
+    if (got429) pass('rate-limit', `429 after ${attempts} attempts`);
+    else warn('rate-limit', 'no 429 in 8 attempts (rate limit disabled?)');
   } catch (e) {
     fail('rate-limit', errMsg(e));
   }
 }
 
-// ── Resumen ────────────────────────────────────────────────────────────────────
+// ── Summary ────────────────────────────────────────────────────────────────────
 const counts: Record<Status, number> = { PASS: 0, FAIL: 0, WARN: 0, SKIP: 0 };
 for (const r of results) counts[r.status]++;
 
 console.log(
-  `\n${color(1, 'Resumen')}: ${paint.PASS(`${counts.PASS} PASS`)}  ${paint.FAIL(
+  `\n${color(1, 'Summary')}: ${paint.PASS(`${counts.PASS} PASS`)}  ${paint.FAIL(
     `${counts.FAIL} FAIL`,
   )}  ${paint.WARN(`${counts.WARN} WARN`)}  ${paint.SKIP(`${counts.SKIP} SKIP`)}`,
 );
 
 if (counts.FAIL > 0) {
-  console.log(`${paint.FAIL('✗ QA con fallos.')}\n`);
+  console.log(`${paint.FAIL('✗ QA failed.')}\n`);
   process.exit(1);
 }
-console.log(`${paint.PASS('✓ QA OK.')}\n`);
+console.log(`${paint.PASS('✓ QA passed.')}\n`);
 process.exit(0);

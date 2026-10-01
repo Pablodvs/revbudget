@@ -1,4 +1,13 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  setSystemTime,
+  test,
+} from 'bun:test';
 import { monthBounds, toZonedYearMonth } from 'shared';
 import { db } from '../db';
 import { parseFailures, transactions } from '../db/schema';
@@ -39,6 +48,10 @@ afterAll(() => {
 
 beforeEach(async () => {
   await truncateAll();
+});
+
+afterEach(() => {
+  setSystemTime();
 });
 
 async function addTx(
@@ -168,11 +181,11 @@ describe('GET /api/stats/trends', () => {
   test('series apply formula and exclude income; topMerchants only expense+adjustment', async () => {
     const w = await seedWallet({ name: 'Food', budget: 10000 });
 
-    // Use current month to land inside the trailing 6-month window.
-    const now = new Date();
-    const y = now.getUTCFullYear();
-    const m = String(now.getUTCMonth() + 1).padStart(2, '0');
-    const day = (d: number) => `${y}-${m}-${String(d).padStart(2, '0')}T12:00:00Z`;
+    // Pinned clock + fixed dates. Deriving the dates from the real UTC clock
+    // broke from 22:00Z on every month's last day: the window ends at the
+    // current Madrid month, which by then is already the next one.
+    setSystemTime(new Date('2026-04-20T12:00:00.000Z'));
+    const day = (d: number) => `2026-04-${String(d).padStart(2, '0')}T12:00:00Z`;
 
     await addTx(w.id, 10000, day(5), 'shop', 'expense');
     await addTx(w.id, 1000, day(6), 'shop', 'adjustment');
@@ -184,6 +197,7 @@ describe('GET /api/stats/trends', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as Trends;
 
+    expect(body.months.at(-1)).toBe('2026-04');
     const series = body.series.find((s) => s.walletId === w.id);
     expect(series).toBeDefined();
     // 10000 + 1000 - 3000 + 2000 = 10000 (income excluded)
@@ -201,6 +215,19 @@ describe('GET /api/stats/trends', () => {
     // sum uses raw amount (expense+adjustment), no refund subtraction on this listing
     expect(shop?.total).toBe(11000);
     expect(shop?.count).toBe(2);
+  });
+
+  test('keeps an archived wallet that has spend in the window', async () => {
+    setSystemTime(new Date('2026-04-20T12:00:00.000Z'));
+    const food = await seedWallet({ name: 'Food' });
+    const old = await seedWallet({ name: 'Old', isActive: false });
+    await seedWallet({ name: 'Unused', isActive: false });
+    await addTx(old.id, 4000, '2026-03-10T12:00:00Z');
+
+    const res = await app.request('/api/stats/trends', { headers: AUTH });
+    const body = (await res.json()) as Trends;
+    expect(body.series.map((s) => s.walletId)).toEqual([food.id, old.id]);
+    expect(body.series[1]?.values).toEqual([0, 0, 0, 0, 4000, 0]);
   });
 });
 

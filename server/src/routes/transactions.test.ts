@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { eq } from 'drizzle-orm';
 import { db } from '../db';
 import { merchantRules, transactions } from '../db/schema';
@@ -22,6 +22,36 @@ beforeEach(async () => {
   await truncateAll();
   invalidateContainsCache();
 });
+
+afterEach(() => {
+  db.$client.exec('DROP TRIGGER IF EXISTS fail_rule_insert');
+});
+
+async function seedPending() {
+  const [row] = await db
+    .insert(transactions)
+    .values({
+      walletId: null,
+      amount: 1200,
+      merchant: 'mercadona',
+      merchantDisplay: 'MERCADONA',
+      rawText: 'seed',
+      status: 'pending',
+      type: 'expense',
+      transactionDate: '2026-03-03T09:00:00Z',
+    })
+    .returning();
+  if (!row) throw new Error('seedPending');
+  return row;
+}
+
+function put(id: number, body: unknown) {
+  return app.request(`/api/transactions/${id}`, {
+    method: 'PUT',
+    headers: AUTH,
+    body: JSON.stringify(body),
+  });
+}
 
 async function seedTx(walletId: number, type: 'expense' | 'income' | 'refund' | 'adjustment') {
   const [row] = await db
@@ -275,5 +305,57 @@ describe('PUT /api/transactions/:id', () => {
       body: JSON.stringify({ relatedTxId: 987654 }),
     });
     expect(bad.status).toBe(400);
+  });
+
+  test('status classified without a wallet is rejected (classified_requires_wallet)', async () => {
+    const pending = await seedPending();
+    const res = await put(pending.id, { status: 'classified' });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('classified_requires_wallet');
+    const [row] = await db.select().from(transactions).where(eq(transactions.id, pending.id));
+    expect(row).toMatchObject({ status: 'pending', walletId: null });
+
+    const w = await seedWallet();
+    const classified = await seedTx(w.id, 'expense');
+    const unassign = await put(classified.id, { walletId: null, status: 'classified' });
+    expect(unassign.status).toBe(400);
+  });
+
+  test("reclassifying does not turn the user's contains rule into an exact rule", async () => {
+    const shopping = await seedWallet({ name: 'Shopping' });
+    const gifts = await seedWallet({ name: 'Gifts' });
+    await db.insert(merchantRules).values({
+      pattern: 'mercadona',
+      walletId: shopping.id,
+      matchType: 'contains',
+      requireConfirmation: false,
+    });
+    const tx = await seedTx(shopping.id, 'expense');
+
+    expect((await put(tx.id, { walletId: gifts.id })).status).toBe(200);
+    const rules = await db.select().from(merchantRules);
+    expect(rules.map((r) => [r.pattern, r.matchType, r.walletId])).toEqual([
+      ['mercadona', 'contains', shopping.id],
+    ]);
+  });
+
+  test('the update and the learned rule commit together', async () => {
+    const w = await seedWallet();
+    const pending = await seedPending();
+    db.$client.exec(
+      "CREATE TEMP TRIGGER fail_rule_insert BEFORE INSERT ON merchant_rules BEGIN SELECT RAISE(ABORT, 'boom'); END",
+    );
+
+    const res = await put(pending.id, { walletId: w.id });
+    expect(res.status).toBe(500);
+    const [row] = await db.select().from(transactions).where(eq(transactions.id, pending.id));
+    expect(row).toMatchObject({ status: 'pending', walletId: null, classifiedAt: null });
+  });
+
+  test('an unknown walletId is a 400 invalid_reference, not a 500', async () => {
+    const pending = await seedPending();
+    const res = await put(pending.id, { walletId: 999999 });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_reference');
   });
 });

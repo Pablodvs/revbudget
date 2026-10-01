@@ -18,7 +18,7 @@ export function useCreateRule() {
   return useMutation({
     mutationFn: async (body: MerchantRuleCreate) => {
       const res = await api.api['merchant-rules'].$post({ json: body });
-      if (!res.ok) throw await apiError(res, 'create failed');
+      if (!res.ok) throw await apiError(res, "Couldn't create the rule.");
       return (await res.json()) as MerchantRule;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['rules'] }),
@@ -33,7 +33,7 @@ export function useUpdateRule() {
         param: { id: String(id) },
         json: patch,
       });
-      if (!res.ok) throw await apiError(res, 'update failed');
+      if (!res.ok) throw await apiError(res, "Couldn't save the rule.");
       return (await res.json()) as MerchantRule;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['rules'] }),
@@ -47,7 +47,7 @@ export function useDeleteRule() {
       const res = await api.api['merchant-rules'][':id'].$delete({
         param: { id: String(id) },
       });
-      if (!res.ok) throw await apiError(res, 'delete failed');
+      if (!res.ok) throw await apiError(res, "Couldn't delete the rule.");
       return true;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['rules'] }),

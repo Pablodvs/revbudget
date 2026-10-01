@@ -1,8 +1,11 @@
 export const DEFAULT_TIMEZONE = 'Europe/Madrid';
 
+// English UI, euro-native conventions: "€1,234.56", "30 Sept, 14:05".
+const LOCALE = 'en-IE';
+
 export function formatCents(amount: number, currency: string): string {
   try {
-    return new Intl.NumberFormat('es-ES', {
+    return new Intl.NumberFormat(LOCALE, {
       style: 'currency',
       currency,
     }).format(amount / 100);
@@ -12,6 +15,28 @@ export function formatCents(amount: number, currency: string): string {
     // from the UI) instead of crashing every view and the Telegram /status.
     return `${(amount / 100).toFixed(2)} ${currency}`;
   }
+}
+
+const DATE_TIME = new Intl.DateTimeFormat(LOCALE, {
+  day: '2-digit',
+  month: 'short',
+  hour: '2-digit',
+  minute: '2-digit',
+  timeZone: DEFAULT_TIMEZONE,
+});
+
+// Transaction timestamp in the app's timezone, e.g. "30 Sept, 14:05".
+export function formatDateTime(iso: string): string {
+  return DATE_TIME.format(new Date(iso));
+}
+
+// "2026-09" -> "September 2026" (or "Sept 2026" with style 'short').
+export function formatMonth(month: string, style: 'long' | 'short' = 'long'): string {
+  const parsed = parseMonth(month);
+  if (!parsed) return month;
+  return new Intl.DateTimeFormat(LOCALE, { month: style, year: 'numeric', timeZone: 'UTC' }).format(
+    new Date(Date.UTC(parsed.year, parsed.month - 1, 1)),
+  );
 }
 
 function tzOffsetAt(date: Date, tz: string): number {

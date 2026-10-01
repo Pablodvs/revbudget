@@ -1,6 +1,11 @@
 /// <reference types="bun-types" />
 import { describe, expect, test } from 'bun:test';
-import { TransactionCreateSchema, WalletCreateSchema, WalletUpdateSchema } from './schemas';
+import {
+  TransactionCreateSchema,
+  TransactionUpdateSchema,
+  WalletCreateSchema,
+  WalletUpdateSchema,
+} from './schemas';
 
 const baseWallet = { name: 'Food', budget: 35000, color: '#22c55e' };
 
@@ -42,5 +47,39 @@ describe('currency validation', () => {
       currency: 'gbp',
     });
     expect(r.currency).toBe('GBP');
+  });
+});
+
+describe('money bounds', () => {
+  const baseTx = {
+    walletId: 1,
+    type: 'expense',
+    merchantDisplay: 'Amazon',
+    transactionDate: '2026-03-15T10:00:00.000Z',
+  };
+  const ONE_MILLION_EUR = 100_000_000;
+
+  test('accepts amounts and budgets up to €1M', () => {
+    expect(TransactionCreateSchema.safeParse({ ...baseTx, amount: ONE_MILLION_EUR }).success).toBe(
+      true,
+    );
+    expect(WalletCreateSchema.safeParse({ ...baseWallet, budget: ONE_MILLION_EUR }).success).toBe(
+      true,
+    );
+  });
+
+  // 9e18 twice overflows SQLite's integer SUM(); 1e300 passes .int() and is stored as REAL.
+  test('rejects amounts above €1M', () => {
+    for (const amount of [ONE_MILLION_EUR + 1, 9e18, 1e300]) {
+      expect(TransactionCreateSchema.safeParse({ ...baseTx, amount }).success).toBe(false);
+      expect(TransactionUpdateSchema.safeParse({ amount }).success).toBe(false);
+    }
+  });
+
+  test('rejects budgets above €1M', () => {
+    for (const budget of [ONE_MILLION_EUR + 1, 9e18, 1e300]) {
+      expect(WalletCreateSchema.safeParse({ ...baseWallet, budget }).success).toBe(false);
+      expect(WalletUpdateSchema.safeParse({ budget }).success).toBe(false);
+    }
   });
 });

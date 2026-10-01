@@ -1,9 +1,13 @@
-import { afterAll, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, describe, expect, setSystemTime, test } from 'bun:test';
 import { Hono } from 'hono';
-import { rateLimit, stopRateLimitSweeper } from './rate-limit';
+import { HARD_CAP, IDLE_EVICT_MS, rateLimit, stopRateLimitSweeper } from './rate-limit';
 
 afterAll(() => {
   stopRateLimitSweeper();
+});
+
+afterEach(() => {
+  setSystemTime();
 });
 
 function build(capacity: number, refillPerSecond: number) {
@@ -63,5 +67,46 @@ describe('rateLimit middleware', () => {
     const body = (await res.json()) as { error: string; requestId: string };
     expect(body.error).toBe('rate_limited');
     expect(body.requestId).toBe('test-rid');
+  });
+});
+
+describe('rateLimit eviction', () => {
+  const t0 = new Date('2026-01-01T00:00:00Z').getTime();
+  const hit = (app: ReturnType<typeof build>, ip: string) =>
+    app.request('/', { headers: { 'x-test-ip': ip } });
+
+  async function flood(app: ReturnType<typeof build>, count: number) {
+    for (let i = 0; i < count; i++) {
+      expect((await hit(app, `flood-${i}`)).status).toBe(200);
+    }
+  }
+
+  test('a saturated store admits a new key by evicting the least recently used one', async () => {
+    setSystemTime(t0);
+    const app = build(1, 0);
+    await flood(app, HARD_CAP); // flood-0 is now the least recently used
+    expect((await hit(app, 'flood-0')).status).toBe(429); // ...and now flood-1 is
+
+    expect((await hit(app, 'phone')).status).toBe(200);
+    expect((await hit(app, 'phone')).status).toBe(429); // tracked like any other key
+    // The store stayed at HARD_CAP: flood-1 was forgotten (a fresh bucket admits
+    // it again), while flood-0, touched since, is still drained.
+    expect((await hit(app, 'flood-1')).status).toBe(200);
+    expect((await hit(app, 'flood-0')).status).toBe(429);
+  });
+
+  test('evicts only idle buckets, so an active one keeps its drained state', async () => {
+    setSystemTime(t0);
+    const app = build(1, 0);
+    expect((await hit(app, 'hot')).status).toBe(200);
+    await flood(app, HARD_CAP - 1);
+
+    setSystemTime(t0 + IDLE_EVICT_MS - 1);
+    expect((await hit(app, 'hot')).status).toBe(429);
+
+    // The newcomer triggers the at-cap sweep: the idle flood goes, 'hot' stays.
+    setSystemTime(t0 + IDLE_EVICT_MS);
+    expect((await hit(app, 'newcomer')).status).toBe(200);
+    expect((await hit(app, 'hot')).status).toBe(429);
   });
 });

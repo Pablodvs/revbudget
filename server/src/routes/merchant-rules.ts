@@ -1,4 +1,3 @@
-import { zValidator } from '@hono/zod-validator';
 import { eq } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
@@ -10,6 +9,7 @@ import {
 } from 'shared';
 import { db } from '../db';
 import { merchantRules } from '../db/schema';
+import { validate } from '../lib/validate';
 import { invalidateContainsCache } from '../services/classifier';
 
 export const merchantRulesRoute = new Hono()
@@ -17,7 +17,7 @@ export const merchantRulesRoute = new Hono()
     const rows = await db.select().from(merchantRules).orderBy(merchantRules.id);
     return c.json(rows);
   })
-  .post('/', zValidator('json', MerchantRuleCreateSchema), async (c) => {
+  .post('/', validate('json', MerchantRuleCreateSchema), async (c) => {
     const body = c.req.valid('json');
     const [row] = await db
       .insert(merchantRules)
@@ -33,8 +33,8 @@ export const merchantRulesRoute = new Hono()
   })
   .put(
     '/:id',
-    zValidator('param', IdParamSchema),
-    zValidator('json', MerchantRuleUpdateSchema),
+    validate('param', IdParamSchema),
+    validate('json', MerchantRuleUpdateSchema),
     async (c) => {
       const { id } = c.req.valid('param');
       const body = c.req.valid('json');
@@ -55,7 +55,7 @@ export const merchantRulesRoute = new Hono()
       return c.json(row);
     },
   )
-  .delete('/:id', zValidator('param', IdParamSchema), async (c) => {
+  .delete('/:id', validate('param', IdParamSchema), async (c) => {
     const { id } = c.req.valid('param');
     const [row] = await db.delete(merchantRules).where(eq(merchantRules.id, id)).returning();
     if (!row) throw new HTTPException(404, { message: 'rule_not_found' });

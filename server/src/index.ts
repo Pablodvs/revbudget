@@ -3,11 +3,9 @@ import { app } from './app';
 import { config } from './config';
 import { seedBootstrapAdmin } from './db/seed-admin';
 import { log } from './lib/log';
-import { bot } from './services/telegram';
+import { telegram } from './services/telegram';
 
 const isProduction = config.NODE_ENV === 'production';
-const isDevToken =
-  !config.TELEGRAM_BOT_TOKEN || config.TELEGRAM_BOT_TOKEN.startsWith('0000000000:');
 
 if (isProduction) {
   app.use('/assets/*', serveStatic({ root: './dashboard/dist' }));
@@ -20,15 +18,16 @@ seedBootstrapAdmin().catch((err) => {
   });
 });
 
-if (!isDevToken) {
+if (telegram) {
+  const { bot, chatId } = telegram;
   bot.api
-    .getChat(config.TELEGRAM_CHAT_ID)
+    .getChat(chatId)
     .then((chat) => {
       log.info('boot', 'telegram_chat_ok', { id: chat.id, type: chat.type });
     })
     .catch((err: unknown) => {
       log.error('boot', 'telegram_chat_unreachable', {
-        id: config.TELEGRAM_CHAT_ID,
+        id: chatId,
         err: err instanceof Error ? err.message : String(err),
       });
     });
@@ -43,7 +42,9 @@ if (!isDevToken) {
       });
     });
 } else {
-  log.warn('boot', 'bot_skipped_placeholder_token');
+  log.info('boot', 'telegram_disabled', {
+    reason: 'TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID not set; notifications are stored only',
+  });
 }
 
 const port = config.PORT;

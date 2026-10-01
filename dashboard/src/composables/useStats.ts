@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/vue-query';
+import { keepPreviousData, useQuery } from '@tanstack/vue-query';
 import type { MonthlyStats, Trends } from 'shared';
 import type { MaybeRefOrGetter } from 'vue';
 import { computed, toValue } from 'vue';
@@ -13,6 +13,8 @@ export function useMonthlyStats(month: MaybeRefOrGetter<string>) {
       if (!res.ok) throw new Error('failed to fetch stats');
       return (await res.json()) as MonthlyStats;
     },
+    // Keep last month on screen while the next one loads (no flash on the arrows).
+    placeholderData: keepPreviousData,
   });
 }
 

@@ -27,14 +27,18 @@ const Currency = z
   .regex(/^[A-Za-z]{3}$/, 'Expected a 3-letter currency code')
   .transform((s) => s.toUpperCase());
 
+// €1M cap on any single amount or budget: far above real use, and it keeps SUM()
+// over the ledger nowhere near SQLite's 64-bit integer overflow.
+export const MAX_CENTS = 100_000_000;
 const PositiveIntCents = z.number().int().nonnegative();
-const PositiveAmount = z.number().int().positive();
+const BudgetCents = PositiveIntCents.max(MAX_CENTS);
+const PositiveAmount = z.number().int().positive().max(MAX_CENTS);
 const Id = z.number().int().positive();
 
 export const WalletSchema = z.object({
   id: Id,
   name: z.string().min(1).max(64),
-  budget: PositiveIntCents,
+  budget: BudgetCents,
   currency: z.string().length(3),
   color: HexColor,
   icon: z.string().nullable(),
@@ -46,7 +50,7 @@ export type Wallet = z.infer<typeof WalletSchema>;
 
 export const WalletCreateSchema = z.object({
   name: z.string().min(1).max(64),
-  budget: PositiveIntCents,
+  budget: BudgetCents,
   currency: Currency.default('EUR'),
   color: HexColor,
   icon: z.string().max(8).nullable().optional(),
@@ -198,7 +202,8 @@ export const MonthQuerySchema = z.object({
 
 export const MonthlyStatsSchema = z.object({
   month: MonthString,
-  totalSpent: z.number().int().nonnegative(),
+  // Net of refunds, so a refund-heavy month can go negative.
+  totalSpent: z.number().int(),
   totalBudget: z.number().int().nonnegative(),
   totalIncome: PositiveIntCents,
   transactionCount: z.number().int().nonnegative(),
@@ -206,9 +211,10 @@ export const MonthlyStatsSchema = z.object({
     z.object({
       walletId: Id,
       walletName: z.string(),
+      currency: Currency,
       color: HexColor,
       icon: z.string().nullable(),
-      budget: PositiveIntCents,
+      budget: BudgetCents,
       spent: z.number().int(),
       income: PositiveIntCents,
       transactionCount: z.number().int().nonnegative(),
@@ -239,6 +245,7 @@ export type Trends = z.infer<typeof TrendsSchema>;
 
 export const ErrorResponseSchema = z.object({
   error: z.string(),
+  issues: z.array(z.object({ path: z.string(), message: z.string() })).optional(),
   requestId: z.string(),
 });
 export type ErrorResponse = z.infer<typeof ErrorResponseSchema>;

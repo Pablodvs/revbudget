@@ -1,4 +1,3 @@
-import { zValidator } from '@hono/zod-validator';
 import { and, desc, eq, gte, lt } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
@@ -13,7 +12,8 @@ import {
 import { config } from '../config';
 import { db } from '../db';
 import { transactions } from '../db/schema';
-import { upsertExactRule } from '../services/classifier';
+import { validate } from '../lib/validate';
+import { learnRule } from '../services/classifier';
 
 async function assertRelatedTxExists(relatedTxId: number): Promise<void> {
   const [row] = await db
@@ -25,7 +25,7 @@ async function assertRelatedTxExists(relatedTxId: number): Promise<void> {
 }
 
 export const transactionsRoute = new Hono()
-  .get('/', zValidator('query', TransactionQuerySchema), async (c) => {
+  .get('/', validate('query', TransactionQuerySchema), async (c) => {
     const q = c.req.valid('query');
     const conditions = [];
     if (q.month) {
@@ -48,7 +48,7 @@ export const transactionsRoute = new Hono()
       .offset(q.offset ?? 0);
     return c.json(rows);
   })
-  .get('/:id', zValidator('param', IdParamSchema), async (c) => {
+  .get('/:id', validate('param', IdParamSchema), async (c) => {
     const { id } = c.req.valid('param');
     const [row] = await db.select().from(transactions).where(eq(transactions.id, id)).limit(1);
     if (!row) throw new HTTPException(404, { message: 'transaction_not_found' });
@@ -56,8 +56,8 @@ export const transactionsRoute = new Hono()
   })
   .put(
     '/:id',
-    zValidator('param', IdParamSchema),
-    zValidator('json', TransactionUpdateSchema),
+    validate('param', IdParamSchema),
+    validate('json', TransactionUpdateSchema),
     async (c) => {
       const { id } = c.req.valid('param');
       const body = c.req.valid('json');
@@ -97,29 +97,34 @@ export const transactionsRoute = new Hono()
 
       const effectiveRelatedTxId =
         body.relatedTxId !== undefined ? body.relatedTxId : existing.relatedTxId;
-      if ((body.type ?? existing.type) === 'adjustment' && effectiveRelatedTxId == null) {
+      const effectiveType = body.type ?? existing.type;
+      if (effectiveType === 'adjustment' && effectiveRelatedTxId == null) {
         throw new HTTPException(400, { message: 'adjustment_requires_related_tx' });
       }
-
-      const [row] = await db
-        .update(transactions)
-        .set(patch)
-        .where(eq(transactions.id, id))
-        .returning();
-
-      const effectiveType = body.type ?? existing.type;
-      if (
-        body.walletId !== undefined &&
-        body.walletId !== null &&
-        existing.merchant &&
-        effectiveType === 'expense'
-      ) {
-        await upsertExactRule(existing.merchant, body.walletId);
+      // A classified row with no wallet is invisible to every stats aggregation.
+      const effectiveWalletId = patch.walletId !== undefined ? patch.walletId : existing.walletId;
+      if ((patch.status ?? existing.status) === 'classified' && effectiveWalletId == null) {
+        throw new HTTPException(400, { message: 'classified_requires_wallet' });
       }
+
+      // Update + rule learning commit together. Synchronous: drizzle's
+      // bun-sqlite transactions can't await.
+      const row = db.transaction((t) => {
+        const updated = t
+          .update(transactions)
+          .set(patch)
+          .where(eq(transactions.id, id))
+          .returning()
+          .get();
+        if (body.walletId != null) {
+          learnRule({ merchant: existing.merchant, type: effectiveType }, body.walletId, t);
+        }
+        return updated;
+      });
       return c.json(row);
     },
   )
-  .post('/', zValidator('json', TransactionCreateSchema), async (c) => {
+  .post('/', validate('json', TransactionCreateSchema), async (c) => {
     const body = c.req.valid('json');
     if (body.relatedTxId != null) await assertRelatedTxExists(body.relatedTxId);
     const now = new Date().toISOString();
@@ -143,7 +148,7 @@ export const transactionsRoute = new Hono()
       .returning();
     return c.json(row, 201);
   })
-  .delete('/:id', zValidator('param', IdParamSchema), async (c) => {
+  .delete('/:id', validate('param', IdParamSchema), async (c) => {
     const { id } = c.req.valid('param');
     const [row] = await db.delete(transactions).where(eq(transactions.id, id)).returning();
     if (!row) throw new HTTPException(404, { message: 'transaction_not_found' });

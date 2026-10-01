@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { authClient } from '../lib/auth';
 
 type AdminUser = {
@@ -10,6 +10,9 @@ type AdminUser = {
   banned?: boolean | null;
   createdAt: string | Date;
 };
+
+const session = authClient.useSession();
+const selfId = computed(() => session.value.data?.user.id);
 
 const users = ref<AdminUser[]>([]);
 const loading = ref(false);
@@ -68,12 +71,17 @@ async function add() {
 
 async function remove(id: string, email: string) {
   if (!confirm(`Remove user ${email}?`)) return;
-  const res = await authClient.admin.removeUser({ userId: id });
-  if (res.error) {
-    listError.value = res.error.message ?? 'remove failed';
-    return;
+  listError.value = null;
+  try {
+    const res = await authClient.admin.removeUser({ userId: id });
+    if (res.error) {
+      listError.value = res.error.message ?? 'remove failed';
+      return;
+    }
+    await refresh();
+  } catch (err) {
+    listError.value = err instanceof Error ? err.message : 'remove failed';
   }
-  await refresh();
 }
 
 onMounted(refresh);
@@ -130,7 +138,7 @@ onMounted(refresh);
         <button
           type="submit"
           :disabled="submitting"
-          class="md:col-span-5 px-3 py-2 rounded-md bg-zinc-100 text-zinc-900 font-medium hover:bg-white disabled:opacity-50"
+          class="md:col-span-5 px-3 py-2 rounded-md bg-zinc-100 text-zinc-900 font-medium hover:bg-zinc-50 disabled:opacity-50"
         >
           {{ submitting ? 'Adding…' : 'Add user' }}
         </button>
@@ -141,7 +149,7 @@ onMounted(refresh);
       <h2 class="text-sm font-medium text-zinc-200">Existing users</h2>
       <p v-if="listError" class="text-sm text-red-400">{{ listError }}</p>
       <p v-if="loading" class="text-sm text-zinc-400">Loading…</p>
-      <div v-else class="rounded-xl border border-zinc-800 overflow-hidden">
+      <div v-else class="rounded-xl border border-zinc-800 overflow-x-auto">
         <table class="w-full text-sm">
           <thead class="bg-zinc-900 text-zinc-400">
             <tr>
@@ -158,6 +166,7 @@ onMounted(refresh);
               <td class="px-3 py-2 text-zinc-400">{{ u.role ?? 'user' }}</td>
               <td class="px-3 py-2 text-right">
                 <button
+                  v-if="u.id !== selfId"
                   class="text-xs text-red-400 hover:text-red-300"
                   @click="remove(u.id, u.email)"
                 >

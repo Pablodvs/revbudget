@@ -1,8 +1,10 @@
 import { Hono } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { config } from './config';
 import { auth } from './lib/auth';
+import { CLIENT_IP_HEADER, getClientIp } from './lib/client-ip';
 import { errorHandler, requestId } from './middleware/error-handler';
 import { type SessionRow, type SessionUser, requireSession } from './middleware/require-session';
 import { merchantRulesRoute } from './routes/merchant-rules';
@@ -64,7 +66,26 @@ export const app = new Hono<{ Variables: Variables }>()
       credentials: false,
     }),
   )
-  .on(['GET', 'POST'], '/api/auth/*', (c) => auth.handler(c.req.raw))
+  // Every API response is per-user or per-request: never cache it anywhere.
+  .use('/api/*', async (c, next) => {
+    await next();
+    c.header('Cache-Control', 'no-store');
+  })
+  // Registered before the better-auth handler, which otherwise parses any body
+  // size pre-authentication. Legitimate bodies are a few KB at most (the webhook
+  // caps its text at 4096 chars).
+  .use(
+    '/api/*',
+    bodyLimit({
+      maxSize: 64 * 1024,
+      onError: (c) => c.json({ error: 'payload_too_large', requestId: c.get('requestId') }, 413),
+    }),
+  )
+  .on(['GET', 'POST'], '/api/auth/*', (c) => {
+    // Overwrites any client-sent value: better-auth's rate limiter keys on it.
+    c.req.raw.headers.set(CLIENT_IP_HEADER, getClientIp(c));
+    return auth.handler(c.req.raw);
+  })
   .use('/api/wallets/*', requireSession)
   .use('/api/transactions/*', requireSession)
   .use('/api/merchant-rules/*', requireSession)
