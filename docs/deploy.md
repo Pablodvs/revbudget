@@ -7,6 +7,7 @@ RevBudget ships as a single Docker image: the Hono server, the built dashboard a
 - [Local Docker (no tunnel)](#local-docker-no-tunnel)
 - [Docker Compose with Cloudflare Tunnel](#docker-compose-with-cloudflare-tunnel)
 - [Coolify](#coolify)
+- [Public demo instance (Coolify + GitHub App)](#public-demo-instance-coolify--github-app)
 - [First admin](#first-admin)
 - [Ollama (optional)](#ollama-optional)
 - [Data, migrations and backups](#data-migrations-and-backups)
@@ -54,6 +55,7 @@ Everything is configured through environment variables, validated at boot. A bad
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | no | Both are needed to enable the bot (see [usage](usage.md#telegram-bot)). |
 | `OLLAMA_ENABLED`, `OLLAMA_URL`, `OLLAMA_MODEL`, `OLLAMA_TIMEOUT_MS` | no | See [Ollama](#ollama-optional). |
 | `TRUSTED_ORIGINS`, `APP_TIMEZONE`, `LOG_NOTIFICATION_TEXT` | no | Extra CORS/auth origins, month boundaries (default `Europe/Madrid`), raw-text logging (default off). |
+| `DEMO_MODE` | no | `true` turns the instance into a public demo with fake data (default `false`). See [Public demo instance](#public-demo-instance-coolify--github-app). |
 | `COMPOSE_PROFILES`, `TUNNEL_TOKEN` | compose only | `COMPOSE_PROFILES=tunnel` starts cloudflared, which needs `TUNNEL_TOKEN`. |
 
 \* At least one of `DASHBOARD_ORIGIN` and `BETTER_AUTH_URL` must be set in production, because localhost is never trusted there. Set both to the same URL.
@@ -119,6 +121,103 @@ The compose file is built for Coolify with a Cloudflare Tunnel sidecar. Coolify'
 
 Coolify rebuilds on every push to the tracked branch. The layer cache keeps source-only rebuilds fast.
 
+## Public demo instance (Coolify + GitHub App)
+
+A public demo lets anyone try RevBudget on fake data. It's the same image with `DEMO_MODE=true`, deployed from the same repository as a second Coolify resource next to prod:
+
+| | Prod | Demo |
+|---|---|---|
+| Coolify resource | `revbudget` | `revbudget-demo` |
+| Branch | `master` | `demo`, a deploy pointer to a `master` commit |
+| Hostname | yours | `demo.<your-domain>` |
+| Secrets and data volume | its own | its own |
+| Ingress | yours | the same kind as prod's |
+
+With `DEMO_MODE=true`, the server:
+
+- seeds fake data on first boot (when there are no transactions), with the demo login `demo@example.com` / `revbudget-demo` as a **non-admin** user;
+- wipes all data and sessions every night at midnight `APP_TIMEZONE`, and seeds again, so a new month never starts empty;
+- allows only sign-in, sign-out and get-session under `/api/auth/*`, and answers anything else, such as a password change, with 403 `demo_locked`;
+- mounts `POST /api/demo/notifications`, which backs the dashboard's notification simulator;
+- forces `OLLAMA_ENABLED=false`, and refuses to start if Telegram is configured.
+
+What visitors see is in [usage.md](usage.md#demo-mode). The threat model is in [SECURITY.md](../SECURITY.md#public-demo).
+
+### Set it up
+
+1. **GitHub App.** In Coolify → **Sources**, install the Coolify GitHub App on this repository, or grant the one prod uses access to it. With the App as the source, GitHub tells Coolify about every push, which is what auto-deploy relies on.
+2. **The `demo` branch.** Create it from `master`:
+
+   ```bash
+   git push origin master:demo
+   ```
+
+3. **The resource.** In the same Coolify project, add a resource of type *Private Repository (with GitHub App)*: this repository, branch `demo`, build pack *Docker Compose*. Name it `revbudget-demo`, turn **Auto Deploy** on, and use the same compose file, domain and deployment strategy settings as [prod](#coolify).
+4. **Environment.** Set these, and copy nothing else from prod:
+
+   ```bash
+   DEMO_MODE=true
+   WEBHOOK_SECRET=<new: openssl rand -hex 32>
+   BETTER_AUTH_SECRET=<new: openssl rand -hex 32>
+   BETTER_AUTH_URL=https://demo.<your-domain>
+   DASHBOARD_ORIGIN=https://demo.<your-domain>
+   OLLAMA_ENABLED=false
+   APP_CPUS=1
+   # Only with the tunnel sidecar (step 5, option b):
+   COMPOSE_PROFILES=tunnel
+   TUNNEL_TOKEN=<the demo tunnel's token>
+   ```
+
+   - **Generate both secrets anew, and never reuse prod's.** The demo is public and less trusted, so nothing that leaks from it may work against prod.
+   - **No Telegram.** Leave `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` unset: the server refuses to start with Telegram and `DEMO_MODE` together.
+   - `OLLAMA_ENABLED=false` is forced in demo mode anyway. Setting it makes that visible in Coolify.
+   - `APP_TIMEZONE` (optional, default `Europe/Madrid`) decides when midnight is.
+5. **Ingress.** Route the demo hostname the same way prod is routed:
+   - **(a) Coolify's proxy**, when prod has a domain on its resource and no `COMPOSE_PROFILES`: set the demo resource's domain to `https://demo.<your-domain>`, and point that hostname at the same ingress that reaches Coolify's proxy (e.g. the Cloudflare Tunnel or DNS record prod's hostname uses). Leave `COMPOSE_PROFILES` and `TUNNEL_TOKEN` unset.
+   - **(b) The tunnel sidecar**: create a **separate** Cloudflare Tunnel as in [Docker Compose with Cloudflare Tunnel](#docker-compose-with-cloudflare-tunnel), with the public hostname `demo.<your-domain>` and the service `http://app:3000`, and set the two sidecar variables above. With its own tunnel, the demo can be revoked or deleted without touching prod's ingress.
+6. **Storage.** Coolify gives each resource its own persistent storage, but check that the demo's `/app/data` path differs from prod's. As a backstop, a demo pointed at a database with real transactions refuses to start (`DEMO_MODE is on, but this database has transactions and no demo@example.com user`) and its reset refuses to wipe it.
+7. **Deploy**, then [verify](#verify-the-demo).
+
+Both resources share the host. The compose file's `mem_limit` and `pids_limit` cap each container's memory and process count, so the demo can't exhaust prod's. `APP_CPUS=1` caps the demo's CPU too; prod leaves it unset (no limit).
+
+### Verify the demo
+
+```bash
+curl -s https://demo.<your-domain>/api/meta
+# {"demo":true,"demoLogin":{"email":"demo@example.com","password":"revbudget-demo"},…}
+
+curl -s -w '\n%{http_code}\n' -X POST https://demo.<your-domain>/api/auth/change-password
+# {"error":"demo_locked","requestId":"…"}
+# 403
+```
+
+- `"demo":true` also proves that the demo hostname reaches the demo container. The same request to prod must say `"demo":false`.
+- Open `https://demo.<your-domain>`, sign in as `demo@example.com` / `revbudget-demo`, and send a sample notification from the simulator. It appears under **Transactions**.
+
+`bun run qa:auth` signs in as an admin, and the demo has none, so it doesn't apply here.
+
+### Publish a new version
+
+From an up-to-date `master`:
+
+```bash
+git push origin master:demo
+```
+
+Coolify sees the push and redeploys the demo. Prod follows every merge to `master`, while the demo changes only when you publish, so you can let prod settle first.
+
+**Why a pointer, not a fork.** Demo mode lives in `master` behind `DEMO_MODE`, so the demo needs no code of its own. `demo` only ever moves to a `master` commit, so it can't drift. If anyone commits to `demo` directly, the next publish is rejected as a non-fast-forward. Move that change to `master` instead, then overwrite the branch with `git push --force origin master:demo`. The same kind of push rolls the demo back: `git push --force origin <older-master-commit>:demo`.
+
+### Reset the demo
+
+The demo resets itself every night at midnight `APP_TIMEZONE`. To reset it sooner, restart it on an empty database:
+
+1. Stop `revbudget-demo` in Coolify.
+2. Delete `revbudget.db*` from the demo's data path, the one you checked in step 6. Make sure it isn't prod's. Delete the files as a set: the `-wal` and `-shm` files belong to the database.
+3. Start it again. With no transactions in the new database, the server seeds the demo on boot.
+
+Sessions live in the same database, so everyone is signed out.
+
 ## First admin
 
 Sign-up is disabled, so the first account has to be created out of band. Pick one:
@@ -134,7 +233,7 @@ Sign-up is disabled, so the first account has to be created out of band. Pick on
 
 After that, admins invite everyone else from the dashboard's **Users** page.
 
-Never use `bun run db:seed:demo` for a deployment. Its admin password is published in the README, so it isn't bundled into the image and it refuses to run when `NODE_ENV=production` or when the configured origin isn't `localhost`.
+Never use `bun run db:seed:demo` for a deployment. Its admin password is published in the README, so it refuses to run when `NODE_ENV=production` or when the configured origin isn't `localhost`. A public demo uses [`DEMO_MODE=true`](#public-demo-instance-coolify--github-app) instead, which seeds a non-admin demo user.
 
 ## Ollama (optional)
 

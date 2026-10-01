@@ -160,7 +160,7 @@ const lineSummary = computed(() => {
 
     <section class="rounded-xl border border-zinc-800 bg-zinc-950 p-6">
       <h2 class="text-sm font-medium text-zinc-400 mb-3 uppercase tracking-wide">
-        Top 5 merchants
+        Top 5 merchants · last 6 months
       </h2>
       <div class="divide-y divide-zinc-900">
         <div

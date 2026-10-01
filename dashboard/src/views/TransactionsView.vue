@@ -1,10 +1,14 @@
 <script setup lang="ts">
 import { formatCents, formatDateTime } from 'shared';
 import type { Transaction, TransactionType } from 'shared';
-import { computed, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref } from 'vue';
+import DemoSimulator from '../components/DemoSimulator.vue';
 import Modal from '../components/Modal.vue';
 import MonthNav from '../components/MonthNav.vue';
 import QueryState from '../components/QueryState.vue';
+import TxActions from '../components/TxActions.vue';
+import TxRow from '../components/TxRow.vue';
+import { useMeta } from '../composables/useMeta';
 import {
   useCreateTransaction,
   useTransactions,
@@ -29,6 +33,37 @@ const txs = useTransactions(() => ({
 }));
 const update = useUpdateTransaction();
 const create = useCreateTransaction();
+const meta = useMeta();
+
+// Flash the row a simulated notification just created, so it's easy to spot.
+// Cleared as the next one is sent, so a parse failure (no row) doesn't leave
+// the previous row lit.
+const highlightId = ref<number | null>(null);
+let highlightTimer: ReturnType<typeof setTimeout> | undefined;
+function unhighlight() {
+  clearTimeout(highlightTimer);
+  highlightId.value = null;
+}
+function highlight(id: number) {
+  highlightId.value = id;
+  clearTimeout(highlightTimer);
+  highlightTimer = setTimeout(unhighlight, 3000);
+  nextTick(() =>
+    document.querySelector(`[data-tx-id="${id}"]`)?.scrollIntoView({ block: 'nearest' }),
+  );
+}
+onBeforeUnmount(() => clearTimeout(highlightTimer));
+
+// The table's six columns don't fit a phone, so below Tailwind's sm breakpoint
+// (40rem) the list is TxRows, as on the Overview. Only one of the two renders,
+// so the highlight's lookup by data-tx-id finds the visible row.
+const smQuery = window.matchMedia('(min-width: 40rem)');
+const isSm = ref(smQuery.matches);
+function onSmChange(e: MediaQueryListEvent) {
+  isSm.value = e.matches;
+}
+smQuery.addEventListener('change', onSmChange);
+onBeforeUnmount(() => smQuery.removeEventListener('change', onSmChange));
 
 // Amounts are edited in euros in both forms; the API takes integer cents.
 // A cleared number input leaves '' in v-model.number, hence relatedTxId || null.
@@ -178,6 +213,13 @@ function amountClass(tx: Transaction): string {
       </div>
     </div>
 
+    <DemoSimulator
+      v-if="meta.data.value?.demo"
+      :samples="meta.data.value.samples"
+      @send="unhighlight"
+      @created="highlight"
+    />
+
     <div class="flex flex-wrap gap-3 text-sm">
       <select
         v-model.number="filters.txWalletId"
@@ -200,7 +242,26 @@ function amountClass(tx: Transaction): string {
       </select>
     </div>
 
-    <div class="rounded-xl border border-zinc-800 bg-zinc-950 overflow-x-auto">
+    <div
+      v-if="!isSm"
+      class="rounded-xl border border-zinc-800 bg-zinc-950 divide-y divide-zinc-900 overflow-hidden"
+    >
+      <TxRow
+        v-for="tx in txs.data.value ?? []"
+        :key="tx.id"
+        :data-tx-id="tx.id"
+        :tx="tx"
+        :wallets="wallets.data.value ?? []"
+        editable
+        class="px-4 transition-colors"
+        :class="{ 'bg-emerald-500/15': tx.id === highlightId }"
+        @edit="openEdit(tx)"
+      />
+      <div v-if="!txs.data.value?.length" class="py-8 text-center text-sm">
+        <QueryState :query="txs" empty="No transactions" />
+      </div>
+    </div>
+    <div v-else class="rounded-xl border border-zinc-800 bg-zinc-950 overflow-x-auto">
       <table class="w-full text-sm">
         <thead class="bg-zinc-900 text-zinc-400 text-left">
           <tr>
@@ -218,7 +279,9 @@ function amountClass(tx: Transaction): string {
           <tr
             v-for="tx in txs.data.value ?? []"
             :key="tx.id"
-            class="hover:bg-zinc-900/50 cursor-pointer"
+            :data-tx-id="tx.id"
+            class="cursor-pointer transition-colors"
+            :class="tx.id === highlightId ? 'bg-emerald-500/15' : 'hover:bg-zinc-900/50'"
             @click="openEdit(tx)"
           >
             <td class="px-4 py-3 text-zinc-400 whitespace-nowrap">{{ formatDateTime(tx.transactionDate) }}</td>
@@ -230,6 +293,7 @@ function amountClass(tx: Transaction): string {
               >
                 {{ tx.merchantDisplay }}
               </button>
+              <TxActions :tx="tx" :wallets="wallets.data.value ?? []" class="mt-1.5" />
             </td>
             <td class="px-4 py-3">
               <span class="px-2 py-0.5 rounded text-xs" :class="TYPE_META[tx.type].cls">

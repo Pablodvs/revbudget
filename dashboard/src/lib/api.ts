@@ -28,6 +28,8 @@ const ERROR_TEXT: Record<string, string> = {
   classified_requires_wallet: 'Pick a wallet before marking this as classified.',
   payload_too_large: 'That request is too large.',
   rate_limited: 'Too many requests. Wait a moment and try again.',
+  demo_locked: "That's turned off in the demo.",
+  demo_full: 'The demo has reached its limits for today; it resets at midnight.',
   internal_error: 'Something went wrong. Please try again.',
 };
 

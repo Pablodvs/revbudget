@@ -14,6 +14,7 @@ import { db } from '../db';
 import { transactions } from '../db/schema';
 import { validate } from '../lib/validate';
 import { learnRule } from '../services/classifier';
+import { assertDemoRoom, demoFull } from '../services/demo';
 
 async function assertRelatedTxExists(relatedTxId: number): Promise<void> {
   const [row] = await db
@@ -106,6 +107,8 @@ export const transactionsRoute = new Hono()
       if ((patch.status ?? existing.status) === 'classified' && effectiveWalletId == null) {
         throw new HTTPException(400, { message: 'classified_requires_wallet' });
       }
+      // A full demo still classifies, but learns no more rules.
+      const rulesFull = demoFull('merchantRules');
 
       // Update + rule learning commit together. Synchronous: drizzle's
       // bun-sqlite transactions can't await.
@@ -116,7 +119,9 @@ export const transactionsRoute = new Hono()
           .where(eq(transactions.id, id))
           .returning()
           .get();
-        if (body.walletId != null) {
+        // Confirming (or changing) a rule's suggestion doesn't learn, as in
+        // Telegram: an exact rule would outrank the rule that asked to confirm.
+        if (body.walletId != null && existing.status !== 'pending_confirmation' && !rulesFull) {
           learnRule({ merchant: existing.merchant, type: effectiveType }, body.walletId, t);
         }
         return updated;
@@ -126,6 +131,7 @@ export const transactionsRoute = new Hono()
   )
   .post('/', validate('json', TransactionCreateSchema), async (c) => {
     const body = c.req.valid('json');
+    assertDemoRoom('transactions');
     if (body.relatedTxId != null) await assertRelatedTxExists(body.relatedTxId);
     const now = new Date().toISOString();
     const merchant = normalizePattern(body.merchantDisplay);

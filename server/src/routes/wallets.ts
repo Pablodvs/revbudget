@@ -6,6 +6,7 @@ import { db } from '../db';
 import { transactions, wallets } from '../db/schema';
 import { validate } from '../lib/validate';
 import { invalidateContainsCache } from '../services/classifier';
+import { assertDemoRoom } from '../services/demo';
 
 export const walletsRoute = new Hono()
   .get('/', async (c) => {
@@ -20,6 +21,7 @@ export const walletsRoute = new Hono()
   })
   .post('/', validate('json', WalletCreateSchema), async (c) => {
     const body = c.req.valid('json');
+    assertDemoRoom('wallets');
     const [row] = await db
       .insert(wallets)
       .values({

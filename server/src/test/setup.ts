@@ -27,3 +27,6 @@ process.env.BOOTSTRAP_ADMIN_PASSWORD = 'test-bootstrap-password';
 // a developer's real Ollama. No extra origins beyond the two above.
 process.env.OLLAMA_ENABLED = 'false';
 process.env.TRUSTED_ORIGINS = '';
+// Off: the demo suites switch config.DEMO_MODE on at runtime (it refuses the
+// Telegram values above at parse time).
+process.env.DEMO_MODE = 'false';

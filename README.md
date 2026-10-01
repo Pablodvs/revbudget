@@ -7,11 +7,28 @@
 [![Bun](https://img.shields.io/badge/Bun-1.3-000?logo=bun&logoColor=white)](https://bun.sh)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6?logo=typescript&logoColor=white)](tsconfig.base.json)
 
+> **Try the live demo** at **[revbudget.pablodiezdevelasco.com](https://revbudget.pablodiezdevelasco.com)** and sign in as **`demo@example.com`** / **`revbudget-demo`**. It's fake data, and it resets nightly. [What to try](#try-the-live-demo)
+
 ![Overview: monthly spend per wallet against its budget](docs/screenshots/overview.png)
 
 | Stats | Light theme | Mobile |
 |---|---|---|
 | ![Stats: spend per wallet, 6-month trends, top merchants](docs/screenshots/stats.png) | ![Light theme](docs/screenshots/light.png) | ![Mobile layout](docs/screenshots/mobile.png) |
+
+## Try the live demo
+
+The live demo is this app, unmodified, running with `DEMO_MODE=true`:
+
+1. **Sign in** as `demo@example.com` / `revbudget-demo`.
+2. **Simulate a notification.** Click a sample chip. It goes through the same pipeline as a real Revolut notification and lands as classified, pending, awaiting confirmation or a parse failure.
+3. **Classify or confirm with one click.** Give a pending transaction a wallet with **Classify**, or accept a rule's suggestion with **Confirm**. Classifying an expense teaches a rule, so that merchant's next charge is classified automatically.
+4. **Browse the stats.** The Overview, wallet pages and Stats show six months of history.
+
+<!-- TODO(owner): add telegram.gif here -->
+
+With the Telegram bot set up, each notification that needs a decision also arrives in Telegram with one-tap buttons. The live demo can't message you, so it puts those actions on dashboard buttons instead.
+
+Everyone shares the demo account, so account changes are disabled. See [usage.md](docs/usage.md#demo-mode) for the details.
 
 ## Why it's interesting
 
@@ -65,12 +82,13 @@ A notification is parsed and matched against merchant rules. It's then classifie
 - **Dashboard:**
   - a monthly overview with budget progress per wallet;
   - wallet detail with a cumulative-spend chart;
-  - a filterable transaction ledger with manual entries, refunds and adjustments;
+  - a filterable transaction ledger with one-click classify, confirm and ignore, plus manual entries, refunds and adjustments;
   - rules management;
   - 6-month trends and top merchants;
   - light and dark themes and a mobile layout.
 - **Invite-only accounts.** An admin manages users, and there's no public sign-up.
 - **Local LLM fallback** (optional). Ollama normalizes notifications the parser doesn't know, so notification text never leaves your network.
+- **Demo mode** (`DEMO_MODE=true`). A public sandbox on fake data, with a notification simulator, a locked shared login and a nightly reset.
 
 ## Quickstart
 
@@ -90,9 +108,9 @@ bun run db:seed:demo   # 7 wallets, 6 months of sample transactions, 5 rules, a 
 bun run dev            # API on :3000, dashboard on :5173
 ```
 
-Open **<http://localhost:5173>** and sign in as **`demo@example.com`** / **`revbudget-demo`**.
+Open **<http://localhost:5173>** and sign in as **`demo@example.com`** / **`revbudget-demo`**. `db:seed:demo` loads the same data as the [live demo](#try-the-live-demo), so you get the same experience locally. Two things differ: the local demo user is an admin, and there are no sample chips, so you play the phone yourself.
 
-Then play the phone: from a second terminal in the repo, send a notification the way the Android app would.
+From a second terminal in the repo, send a notification the way the Android app would:
 
 ```bash
 curl -s http://localhost:3000/api/webhook/revolut \
@@ -101,7 +119,7 @@ curl -s http://localhost:3000/api/webhook/revolut \
   -d '{"text": "You paid €12.50 at Corner Bakery"}'
 ```
 
-The reply shows how it was handled (`pending` unless one of the demo rules matches). The transaction appears under **Transactions**. Give it a wallet, and the next charge from that merchant is classified automatically.
+The reply shows how it was handled (`pending` unless one of the demo rules matches). The transaction appears under **Transactions**. Give it a wallet with **Classify**, and the next charge from that merchant is classified automatically.
 
 To go further, see:
 
@@ -144,7 +162,7 @@ To go further, see:
 
 **Authorization model.** Accounts are invite-only. Every signed-in user has full access to wallets, transactions and rules, and the `admin` role only gates user management (enforced server-side by better-auth's admin plugin). It's single-tenant by design, for a household that already shares its finances.
 
-The full threat model and how to report a vulnerability are in [SECURITY.md](SECURITY.md). The past reviews, with every finding mapped to its fix, are in [docs/security/](docs/security/).
+The full threat model, including the public demo's, and how to report a vulnerability are in [SECURITY.md](SECURITY.md). The past reviews, with every finding mapped to its fix, are in [docs/security/](docs/security/).
 
 ## Testing and quality
 
@@ -155,7 +173,7 @@ The full threat model and how to report a vulnerability are in [SECURITY.md](SEC
 
 ## Deployment
 
-The app ships as a single Docker image containing the API, the dashboard and SQLite, with migrations run by the entrypoint. `docker compose up -d --build` starts it. With `COMPOSE_PROFILES=tunnel`, a pinned `cloudflared` sidecar publishes it through a Cloudflare Tunnel, and the compose file works unchanged on Coolify. For environment variables, a local no-tunnel recipe, Coolify steps, safe Ollama networking and backups, see **[docs/deploy.md](docs/deploy.md)**.
+The app ships as a single Docker image containing the API, the dashboard and SQLite, with migrations run by the entrypoint. `docker compose up -d --build` starts it. With `COMPOSE_PROFILES=tunnel`, a pinned `cloudflared` sidecar publishes it through a Cloudflare Tunnel, and the compose file works unchanged on Coolify. The [public demo](docs/deploy.md#public-demo-instance-coolify--github-app) is a second Coolify resource running the same image with `DEMO_MODE=true`. For environment variables, a local no-tunnel recipe, Coolify steps, safe Ollama networking and backups, see **[docs/deploy.md](docs/deploy.md)**.
 
 ## Project layout
 
@@ -182,6 +200,7 @@ revbudget/
 - **English Revolut notifications only.** Anything else goes to the Ollama fallback, or is recorded as a parse failure.
 - **The Android companion app isn't in this repo.** Anything that can send `POST /api/webhook/revolut` with `{ "text": "…" }` and the `X-Webhook-Secret` header works, e.g. a notification-forwarding automation app. The payload is documented in [docs/usage.md](docs/usage.md#sending-notifications).
 - **Budgets are per wallet, not per month.** Changing a budget also changes how past months are shown.
+- **No currency conversion.** A wallet's totals add up its transactions' amounts as they are, so a US$ or £ payment filed in a EUR wallet counts as the same number of euros.
 - **No self-service password change yet.** Admins set passwords when inviting.
 
 ## License

@@ -57,6 +57,9 @@ export const transactions = sqliteTable(
     walletIdx: index('idx_tx_wallet').on(t.walletId),
     dateIdx: index('idx_tx_date').on(t.transactionDate),
     typeIdx: index('idx_tx_type').on(t.type),
+    // The self-referencing FK's ON DELETE SET NULL looks rows up by this column:
+    // without it every delete scans the table (the demo reset was quadratic).
+    relatedIdx: index('idx_tx_related').on(t.relatedTxId),
     statusCheck: check(
       'status_check',
       sql`${t.status} IN ('pending','pending_confirmation','classified','ignored')`,

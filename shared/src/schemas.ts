@@ -192,6 +192,41 @@ export const WebhookBodySchema = z.object({
 });
 export type WebhookBody = z.infer<typeof WebhookBodySchema>;
 
+// Where an ingested notification landed (see server/src/services/ingest.ts).
+export const IngestStatus = z.enum([
+  'classified',
+  'pending',
+  'pending_confirmation',
+  'parse_failed',
+]);
+export type IngestStatus = z.infer<typeof IngestStatus>;
+
+// A notification the demo's simulator offers, and where it lands on a freshly
+// seeded demo.
+export const DemoSampleSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  text: z.string(),
+  expect: IngestStatus,
+});
+export type DemoSample = z.infer<typeof DemoSampleSchema>;
+
+// GET /api/meta (public). Outside demo mode: false, null, null, [].
+export const MetaSchema = z.object({
+  demo: z.boolean(),
+  demoLogin: z.object({ email: z.string(), password: z.string() }).nullable(),
+  // ISO time of the next nightly demo reset.
+  resetsAt: z.string().nullable(),
+  samples: z.array(DemoSampleSchema),
+});
+export type Meta = z.infer<typeof MetaSchema>;
+
+// POST /api/demo/notifications: a simulated Revolut notification.
+export const DemoNotificationSchema = z.object({
+  text: z.string().min(1).max(500),
+});
+export type DemoNotification = z.infer<typeof DemoNotificationSchema>;
+
 export const IdParamSchema = z.object({
   id: z.coerce.number().int().positive(),
 });

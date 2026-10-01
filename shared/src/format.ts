@@ -39,17 +39,36 @@ export function formatMonth(month: string, style: 'long' | 'short' = 'long'): st
   );
 }
 
+// One formatter per time zone, built on first use. Building an
+// Intl.DateTimeFormat costs far more than formatting with one, and
+// /api/stats/trends reads a zoned month per transaction: building one per call
+// made 50k rows take 8 s, blocking the server.
+function perZone(options: Intl.DateTimeFormatOptions): (tz: string) => Intl.DateTimeFormat {
+  const formats = new Map<string, Intl.DateTimeFormat>();
+  return (tz) => {
+    let format = formats.get(tz);
+    if (!format) {
+      format = new Intl.DateTimeFormat('en-US', { ...options, timeZone: tz });
+      formats.set(tz, format);
+    }
+    return format;
+  };
+}
+
+const wallClockFormat = perZone({
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hour12: false,
+});
+
+const yearMonthFormat = perZone({ year: 'numeric', month: '2-digit' });
+
 function tzOffsetAt(date: Date, tz: string): number {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: tz,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  }).formatToParts(date);
+  const parts = wallClockFormat(tz).formatToParts(date);
   const lookup: Record<string, number> = {};
   for (const p of parts) {
     if (p.type !== 'literal') lookup[p.type] = Number(p.value);
@@ -73,11 +92,7 @@ function zonedMonthStartToUtc(year: number, month1: number, tz: string): Date {
 }
 
 export function zonedYearMonth(now: Date, tz: string): { year: number; month: number } {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: tz,
-    year: 'numeric',
-    month: '2-digit',
-  }).formatToParts(now);
+  const parts = yearMonthFormat(tz).formatToParts(now);
   const lookup: Record<string, number> = {};
   for (const p of parts) {
     if (p.type !== 'literal') lookup[p.type] = Number(p.value);

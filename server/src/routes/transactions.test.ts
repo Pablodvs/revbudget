@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import { db } from '../db';
 import { merchantRules, transactions } from '../db/schema';
 import { stopRateLimitSweeper } from '../middleware/rate-limit';
-import { invalidateContainsCache } from '../services/classifier';
+import { classifyMerchant, invalidateContainsCache } from '../services/classifier';
 import { authedHeaders, ensureMigrated, seedWallet, truncateAll } from '../test/db';
 
 const { app } = await import('../app');
@@ -337,6 +337,50 @@ describe('PUT /api/transactions/:id', () => {
     expect(rules.map((r) => [r.pattern, r.matchType, r.walletId])).toEqual([
       ['mercadona', 'contains', shopping.id],
     ]);
+  });
+
+  // Telegram's Confirm and Choose-other don't learn; the dashboard mustn't either,
+  // or an exact rule would outrank the rule that asked for confirmation.
+  test.each([
+    ['confirming', 'suggested'],
+    ['changing', 'other'],
+  ] as const)('%s a pending_confirmation learns no rule', async (_, pick) => {
+    const shopping = await seedWallet({ name: 'Shopping' });
+    const gifts = await seedWallet({ name: 'Gifts' });
+    // A contains pattern that differs from the merchant: an exact rule for the
+    // merchant wouldn't collide with it, so it would silently outrank it.
+    await db.insert(merchantRules).values({
+      pattern: 'amazon',
+      walletId: shopping.id,
+      matchType: 'contains',
+      requireConfirmation: true,
+    });
+    invalidateContainsCache();
+    const [tx] = await db
+      .insert(transactions)
+      .values({
+        walletId: shopping.id,
+        amount: 1899,
+        merchant: 'amazon marketplace',
+        merchantDisplay: 'Amazon Marketplace',
+        rawText: 'seed',
+        status: 'pending_confirmation',
+        type: 'expense',
+        transactionDate: '2026-03-03T09:00:00Z',
+      })
+      .returning();
+    if (!tx) throw new Error('seed');
+
+    const walletId = pick === 'suggested' ? shopping.id : gifts.id;
+    const res = await put(tx.id, { walletId, status: 'classified' });
+    expect(res.status).toBe(200);
+
+    const rules = await db.select().from(merchantRules);
+    expect(rules.map((r) => [r.pattern, r.matchType, r.requireConfirmation])).toEqual([
+      ['amazon', 'contains', true],
+    ]);
+    // The next notification from this merchant still asks.
+    expect((await classifyMerchant('amazon marketplace')).requireConfirmation).toBe(true);
   });
 
   test('the update and the learned rule commit together', async () => {

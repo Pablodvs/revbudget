@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { useQueryClient } from '@tanstack/vue-query';
-import { computed } from 'vue';
+import { computed, onBeforeUnmount, ref } from 'vue';
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router';
+import { useMeta } from './composables/useMeta';
 import { authClient } from './lib/auth';
 import { useThemeStore } from './stores/theme';
 
@@ -15,6 +16,43 @@ const session = authClient.useSession();
 const user = computed(() => session.value.data?.user);
 const isAdmin = computed(() => user.value?.role === 'admin');
 const isPublic = computed(() => Boolean(route.meta.public));
+
+// Dismissed per tab session, so the next visit is told again that the data is fake.
+const meta = useMeta();
+const BANNER_KEY = 'revbudget:demo-banner-dismissed';
+// Storage can throw (blocked site data, some private modes); the banner then
+// just shows again next time.
+function readDismissed(): boolean {
+  try {
+    return sessionStorage.getItem(BANNER_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+const bannerDismissed = ref(readDismissed());
+const showBanner = computed(() => Boolean(meta.data.value?.demo) && !bannerDismissed.value);
+// The reset is at midnight in the server's timezone, which may not be the
+// visitor's, so say how far off it is rather than when. Ticks so an open tab
+// counts down.
+const now = ref(Date.now());
+const clock = setInterval(() => {
+  now.value = Date.now();
+}, 60_000);
+onBeforeUnmount(() => clearInterval(clock));
+const bannerText = computed(() => {
+  const base = 'Demo · fake data shared with other visitors';
+  const ms = Date.parse(meta.data.value?.resetsAt ?? '') - now.value;
+  if (!(ms > 0)) return `${base} · resets nightly`;
+  const hours = Math.round(ms / 3_600_000);
+  const until = hours >= 1 ? `${hours} h` : `${Math.ceil(ms / 60_000)} min`;
+  return `${base} · next reset in ${until}`;
+});
+function dismissBanner() {
+  bannerDismissed.value = true;
+  try {
+    sessionStorage.setItem(BANNER_KEY, '1');
+  } catch {}
+}
 
 const navLinks = computed(() => {
   const links = [
@@ -38,6 +76,35 @@ async function logout() {
 
 <template>
   <div class="min-h-full flex flex-col">
+    <section
+      v-if="user && !isPublic && showBanner"
+      aria-label="Demo notice"
+      class="border-b border-emerald-500/20 bg-emerald-500/10 text-sm"
+    >
+      <div class="max-w-6xl mx-auto px-4 sm:px-6 py-2 flex items-start sm:items-center gap-3">
+        <p class="flex-1 min-w-0">
+          <span class="font-medium text-emerald-300">{{ bannerText }}</span>
+          <span class="text-zinc-400">
+            · The Telegram side of the flow is shown in the
+            <a
+              href="https://github.com/Pablodvs/revbudget#readme"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="underline hover:text-zinc-100"
+              >README video<span class="sr-only"> (opens in a new tab)</span></a
+            >.
+          </span>
+        </p>
+        <button
+          type="button"
+          aria-label="Dismiss demo notice"
+          class="shrink-0 -my-1 h-7 w-7 grid place-items-center rounded-md text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900"
+          @click="dismissBanner"
+        >
+          ✕
+        </button>
+      </div>
+    </section>
     <header
       v-if="user && !isPublic"
       class="border-b border-zinc-800 bg-zinc-950/80 backdrop-blur sticky top-0 z-10"

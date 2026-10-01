@@ -1,6 +1,6 @@
 /// <reference types="bun-types" />
 import { describe, expect, test } from 'bun:test';
-import { formatCents, formatDateTime, formatMonth } from './format';
+import { formatCents, formatDateTime, formatMonth, toZonedYearMonth } from './format';
 
 describe('formatCents', () => {
   test('formats cents with the wallet currency', () => {
@@ -28,5 +28,22 @@ describe('formatMonth', () => {
 
   test('passes malformed input through', () => {
     expect(formatMonth('bogus')).toBe('bogus');
+  });
+});
+
+describe('toZonedYearMonth', () => {
+  test('reads the month in the given timezone', () => {
+    expect(toZonedYearMonth('2026-09-30T22:30:00.000Z', 'Europe/Madrid')).toBe('2026-10');
+    expect(toZonedYearMonth('2026-09-30T22:30:00.000Z', 'America/New_York')).toBe('2026-09');
+  });
+
+  // /api/stats/trends calls it once per transaction: building a formatter per
+  // call made 20k rows take over 3 s.
+  test('reads many months quickly', () => {
+    const start = performance.now();
+    for (let i = 0; i < 20_000; i++) {
+      toZonedYearMonth(new Date(i * 3_600_000).toISOString(), 'Europe/Madrid');
+    }
+    expect(performance.now() - start).toBeLessThan(1000);
   });
 });

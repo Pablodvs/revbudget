@@ -3,6 +3,7 @@ import { app } from './app';
 import { config } from './config';
 import { seedBootstrapAdmin } from './db/seed-admin';
 import { log } from './lib/log';
+import { NotADemoDatabaseError, scheduleDemoReset, seedDemoIfEmpty } from './services/demo';
 import { telegram } from './services/telegram';
 
 const isProduction = config.NODE_ENV === 'production';
@@ -12,11 +13,23 @@ if (isProduction) {
   app.get('*', serveStatic({ path: './dashboard/dist/index.html' }));
 }
 
-seedBootstrapAdmin().catch((err) => {
+const bootstrapped = seedBootstrapAdmin().catch((err) => {
   log.error('boot', 'bootstrap_admin_unexpected_error', {
     err: err instanceof Error ? err.message : String(err),
   });
 });
+
+if (config.DEMO_MODE) {
+  // After the bootstrap admin, which is only created on a database without
+  // users: the demo seed adds one.
+  bootstrapped.then(seedDemoIfEmpty).catch((err) => {
+    log.error('boot', 'demo_seed_failed', {
+      err: err instanceof Error ? err.message : String(err),
+    });
+    if (err instanceof NotADemoDatabaseError) process.exit(1);
+  });
+  scheduleDemoReset();
+}
 
 if (telegram) {
   const { bot, chatId } = telegram;

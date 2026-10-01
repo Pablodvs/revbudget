@@ -1,13 +1,21 @@
-// Demo data for a first look at the dashboard: `bun run db:seed:demo`.
+// Demo data for a first look at the dashboard: `bun run db:seed:demo`, or at
+// boot and every night on a DEMO_MODE instance (services/demo.ts).
 // Everything is synthetic, and dates are relative to now, so the current month
 // always has data: budgets at 40-110% (green, amber and red bars), pending and
 // to-confirm items, income, a refund, an adjustment and a few merchant rules.
-import { count } from 'drizzle-orm';
-import { currentMonth, monthBounds, normalizePattern, shiftMonth } from 'shared';
+import { count, eq } from 'drizzle-orm';
+import { type DemoSample, currentMonth, monthBounds, normalizePattern, shiftMonth } from 'shared';
 import { config } from '../config';
 import { auth } from '../lib/auth';
 import { db } from './index';
-import { type TransactionInsert, merchantRules, transactions, user, wallets } from './schema';
+import {
+  type TransactionInsert,
+  account,
+  merchantRules,
+  transactions,
+  user,
+  wallets,
+} from './schema';
 import { type SeedWalletName, seedWalletRows } from './seed';
 
 export const DEMO_EMAIL = 'demo@example.com';
@@ -85,19 +93,60 @@ const RULES = [
   { pattern: 'amazon', wallet: 'Other', matchType: 'contains', requireConfirmation: true },
 ] as const;
 
+// The dashboard's notification simulator (GET /api/meta, demo mode only). The
+// rules above decide where each lands on a freshly seeded demo, which
+// routes/meta.test.ts checks.
+export const DEMO_SAMPLES: DemoSample[] = [
+  {
+    id: 'known-merchant',
+    label: 'Groceries at a known shop',
+    text: 'You paid €23.40 at Tesco Express',
+    expect: 'classified',
+  },
+  {
+    id: 'confirm-rule',
+    label: 'Amazon order',
+    text: 'You paid €18.99 at Amazon Marketplace',
+    expect: 'pending_confirmation',
+  },
+  {
+    id: 'new-merchant',
+    label: 'Coffee at a new place',
+    text: 'You paid €4.20 at Blue Bottle Coffee',
+    expect: 'pending',
+  },
+  {
+    id: 'refund',
+    label: 'Uber refund',
+    text: 'Uber refunded you €7.50',
+    expect: 'classified',
+  },
+  {
+    id: 'unreadable',
+    label: 'Unrecognised text',
+    text: 'Your card ending 4821 was used online',
+    expect: 'parse_failed',
+  },
+];
+
 export async function seedDemo(now = new Date()): Promise<string[]> {
-  if (config.NODE_ENV === 'production') {
-    throw new Error('refusing to run with NODE_ENV=production: demo data is fake');
-  }
-  // NODE_ENV is unset on a host checkout, so a production .env can still get
-  // here; its public origin gives it away. The demo admin's password is public.
-  const publicOrigin = [config.BETTER_AUTH_URL, ...config.trustedOrigins].find(
-    (url) => url && !LOCAL_HOST.test(new URL(url).hostname),
-  );
-  if (publicOrigin) {
-    throw new Error(
-      `refusing to run: configured for ${publicOrigin}, and the demo admin's password is public`,
+  // DEMO_MODE is the explicit opt-in to a public instance with a published
+  // login (as a plain user, and behind the demo auth lock). Without it, keep
+  // the demo admin off anything that looks like a real deployment.
+  if (!config.DEMO_MODE) {
+    if (config.NODE_ENV === 'production') {
+      throw new Error('refusing to run with NODE_ENV=production: demo data is fake');
+    }
+    // NODE_ENV is unset on a host checkout, so a production .env can still get
+    // here; its public origin gives it away. The demo admin's password is public.
+    const publicOrigin = [config.BETTER_AUTH_URL, ...config.trustedOrigins].find(
+      (url) => url && !LOCAL_HOST.test(new URL(url).hostname),
     );
+    if (publicOrigin) {
+      throw new Error(
+        `refusing to run: configured for ${publicOrigin}, and the demo admin's password is public`,
+      );
+    }
   }
   const [txCount] = await db.select({ n: count() }).from(transactions);
   if (txCount && txCount.n > 0) {
@@ -107,47 +156,102 @@ export async function seedDemo(now = new Date()): Promise<string[]> {
   }
   const report: string[] = [];
 
+  // Looked up by email, since in DEMO_MODE other users don't replace it: a
+  // demo's owner may bootstrap their own admin next to it. Locally, a database
+  // that already has users gets no extra admin with a published password.
+  const [demoUser] = await db
+    .select({ id: user.id })
+    .from(user)
+    .where(eq(user.email, DEMO_EMAIL))
+    .limit(1);
+  const [users] = await db.select({ n: count() }).from(user);
+  if (demoUser) {
+    report.push(`demo user already exists: ${DEMO_EMAIL}`);
+  } else if (!config.DEMO_MODE && users && users.n > 0) {
+    report.push('users already exist: sign in with your own account (no demo admin created)');
+  } else {
+    const role = config.DEMO_MODE ? 'user' : 'admin';
+    // Same path as create-admin: better-auth hashes and stores the password.
+    await auth.api.createUser({
+      body: { email: DEMO_EMAIL, password: DEMO_PASSWORD, name: 'Demo', role },
+    });
+    report.push(`demo ${role} created: ${DEMO_EMAIL} / ${DEMO_PASSWORD}`);
+  }
+
+  // One synchronous transaction (drizzle's bun-sqlite transactions can't
+  // await): the demo lands whole or not at all.
+  report.push(...db.transaction((t) => insertDemoData(t, now)));
+  return report;
+}
+
+type Executor = Pick<typeof db, 'select' | 'insert'>;
+
+// The demo account as published (in DEMO_MODE: a plain user), for the nightly
+// reset. The rows better-auth's createUser writes, a user and its credential
+// account, but on the caller's executor so they join its synchronous
+// transaction; hence the password comes already hashed, by better-auth.
+export function insertDemoUser(t: Executor, passwordHash: string): void {
+  const id = crypto.randomUUID();
+  t.insert(user).values({ id, email: DEMO_EMAIL, name: 'Demo', role: 'user' }).run();
+  t.insert(account)
+    .values({
+      id: crypto.randomUUID(),
+      accountId: id,
+      providerId: 'credential',
+      userId: id,
+      password: passwordHash,
+    })
+    .run();
+}
+
+// The demo's wallets (topping up the defaults), transactions and merchant
+// rules, reported line by line. Synchronous, on the caller's executor, so it
+// can run inside a transaction: seedDemo's, or services/demo.ts's nightly reset.
+export function insertDemoData(t: Executor, now: Date): string[] {
   const existing = new Set(
-    (await db.select({ name: wallets.name }).from(wallets)).map((w) => w.name),
+    t
+      .select({ name: wallets.name })
+      .from(wallets)
+      .all()
+      .map((w) => w.name),
   );
   const missing = seedWalletRows().filter((w) => !existing.has(w.name));
-  if (missing.length > 0) await db.insert(wallets).values(missing);
-  const walletId = new Map((await db.select().from(wallets)).map((w) => [w.name, w.id]));
+  if (missing.length > 0) t.insert(wallets).values(missing).run();
+  const walletId = new Map(
+    t
+      .select()
+      .from(wallets)
+      .all()
+      .map((w) => [w.name, w.id]),
+  );
   const idOf = (name: SeedWalletName): number => {
     const id = walletId.get(name);
     if (id === undefined) throw new Error(`wallet missing: ${name}`);
     return id;
   };
-  report.push(`wallets: ${missing.length} default wallets created, ${walletId.size} total`);
-
-  const [userCount] = await db.select({ n: count() }).from(user);
-  if (!userCount || userCount.n === 0) {
-    // Same path as create-admin: better-auth hashes and stores the password.
-    await auth.api.createUser({
-      body: { email: DEMO_EMAIL, password: DEMO_PASSWORD, name: 'Demo', role: 'admin' },
-    });
-    report.push(`demo admin created: ${DEMO_EMAIL} / ${DEMO_PASSWORD}`);
-  } else {
-    report.push('users already exist: sign in with your own account (no demo admin created)');
-  }
 
   const thisMonth = currentMonth(now, config.APP_TIMEZONE);
   const months = MONTH_FACTORS.map((_, i) => shiftMonth(thisMonth, i - (MONTH_FACTORS.length - 1)));
   // Spreads a month's planned days over the part of it that has happened, so
-  // the current month never contains a future transaction.
-  const dateIn = (month: string, day: number): string => {
+  // the current month never contains a future transaction. Within its day's
+  // share, a row moves up to a quarter either way, in golden-ratio steps of its
+  // index: rows planned for the same day don't share a timestamp (nor, in a
+  // 31-day month, all sit at 12:00), and every seed is the same.
+  const dateIn = (month: string, day: number, index: number): string => {
     const bounds = monthBounds(month, config.APP_TIMEZONE);
     if (!bounds) throw new Error(`bad month: ${month}`);
     const start = Date.parse(bounds.startISO);
     const end = Math.min(Date.parse(bounds.endISO), now.getTime());
-    return new Date(start + ((day - 0.5) / 31) * (end - start)).toISOString();
+    const nudge = ((index * 0.618) % 1) / 2 - 0.25;
+    return new Date(start + ((day - 0.5 + nudge) / 31) * (end - start)).toISOString();
   };
+  let rows = 0;
   const tx = (
     month: string,
     [wallet, merchant, amount, day]: Spend | Unassigned,
     extra: Partial<TransactionInsert> = {},
   ): TransactionInsert => {
-    const transactionDate = dateIn(month, day);
+    const transactionDate = dateIn(month, day, rows++);
     const status = extra.status ?? 'classified';
     return {
       walletId: wallet ? idOf(wallet) : null,
@@ -163,60 +267,55 @@ export async function seedDemo(now = new Date()): Promise<string[]> {
     };
   };
 
-  // One synchronous transaction (drizzle's bun-sqlite transactions can't
-  // await): the demo lands whole or not at all.
-  const inserted = db.transaction((t) => {
-    let n = 0;
-    const insert = (row: TransactionInsert) => {
-      n++;
-      return t.insert(transactions).values(row).returning().get();
-    };
-    months.forEach((month, i) => {
-      const factor = MONTH_FACTORS[i] ?? 1;
-      insert(tx(month, ['Other', 'Acme Corp Payroll', 285000, 1], { type: 'income' }));
-      for (const [wallet, merchant, cents, day] of MONTHLY) {
-        insert(tx(month, [wallet, merchant, Math.round(cents * factor), day]));
-      }
-    });
-
-    for (const spend of THIS_MONTH) insert(tx(thisMonth, spend));
-    const sofa = insert(tx(thisMonth, ['Home', 'IKEA', 8950, 6]));
-    insert(
-      tx(thisMonth, ['Home', 'IKEA', 350, 8], {
-        type: 'adjustment',
-        relatedTxId: sofa.id,
-        description: 'Delivery surcharge',
-      }),
-    );
-    const order = insert(tx(thisMonth, ['Other', 'Amazon', 2999, 9]));
-    insert(
-      tx(thisMonth, ['Other', 'Amazon', 2999, 14], {
-        type: 'refund',
-        relatedTxId: order.id,
-        description: 'Returned item',
-      }),
-    );
-    for (const spend of PENDING) insert(tx(thisMonth, spend, { status: 'pending' }));
-    for (const spend of TO_CONFIRM) {
-      insert(tx(thisMonth, spend, { status: 'pending_confirmation' }));
+  let n = 0;
+  const insert = (row: TransactionInsert) => {
+    n++;
+    return t.insert(transactions).values(row).returning().get();
+  };
+  months.forEach((month, i) => {
+    const factor = MONTH_FACTORS[i] ?? 1;
+    insert(tx(month, ['Other', 'Acme Corp Payroll', 285000, 1], { type: 'income' }));
+    for (const [wallet, merchant, cents, day] of MONTHLY) {
+      insert(tx(month, [wallet, merchant, Math.round(cents * factor), day]));
     }
-
-    for (const r of RULES) {
-      t.insert(merchantRules)
-        .values({
-          pattern: r.pattern,
-          walletId: idOf(r.wallet),
-          matchType: r.matchType,
-          requireConfirmation: r.requireConfirmation,
-        })
-        .run();
-    }
-    return n;
   });
-  report.push(
-    `inserted ${inserted} transactions (${months[0]} to ${thisMonth}) and ${RULES.length} merchant rules`,
+
+  for (const spend of THIS_MONTH) insert(tx(thisMonth, spend));
+  const sofa = insert(tx(thisMonth, ['Home', 'IKEA', 8950, 6]));
+  insert(
+    tx(thisMonth, ['Home', 'IKEA', 350, 8], {
+      type: 'adjustment',
+      relatedTxId: sofa.id,
+      description: 'Delivery surcharge',
+    }),
   );
-  return report;
+  const order = insert(tx(thisMonth, ['Other', 'Amazon', 2999, 9]));
+  insert(
+    tx(thisMonth, ['Other', 'Amazon', 2999, 14], {
+      type: 'refund',
+      relatedTxId: order.id,
+      description: 'Returned item',
+    }),
+  );
+  for (const spend of PENDING) insert(tx(thisMonth, spend, { status: 'pending' }));
+  for (const spend of TO_CONFIRM) {
+    insert(tx(thisMonth, spend, { status: 'pending_confirmation' }));
+  }
+
+  for (const r of RULES) {
+    t.insert(merchantRules)
+      .values({
+        pattern: r.pattern,
+        walletId: idOf(r.wallet),
+        matchType: r.matchType,
+        requireConfirmation: r.requireConfirmation,
+      })
+      .run();
+  }
+  return [
+    `wallets: ${missing.length} default wallets created, ${walletId.size} total`,
+    `inserted ${n} transactions (${months[0]} to ${thisMonth}) and ${RULES.length} merchant rules`,
+  ];
 }
 
 if (import.meta.main) {

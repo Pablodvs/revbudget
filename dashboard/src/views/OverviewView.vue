@@ -6,6 +6,7 @@ import MonthNav from '../components/MonthNav.vue';
 import ProgressBar from '../components/ProgressBar.vue';
 import QueryState from '../components/QueryState.vue';
 import TxRow from '../components/TxRow.vue';
+import { useMeta } from '../composables/useMeta';
 import { useMonthlyStats } from '../composables/useStats';
 import { useTransactions } from '../composables/useTransactions';
 import { useWallets } from '../composables/useWallets';
@@ -20,6 +21,7 @@ const month = computed({
 const wallets = useWallets();
 const stats = useMonthlyStats(month);
 const recent = useTransactions(() => ({ limit: 5, month: month.value }));
+const meta = useMeta();
 </script>
 
 <template>
@@ -28,6 +30,20 @@ const recent = useTransactions(() => ({ limit: 5, month: month.value }));
       <h1 class="text-2xl font-semibold tracking-tight">Overview</h1>
       <MonthNav v-model="month" />
     </div>
+
+    <RouterLink
+      v-if="meta.data.value?.demo"
+      to="/transactions"
+      class="flex items-center justify-between gap-4 rounded-xl border border-emerald-500/30 bg-emerald-500/5 px-5 py-4 hover:border-emerald-500/60 transition-colors"
+    >
+      <div class="min-w-0">
+        <div class="font-semibold">Simulate a Revolut notification</div>
+        <div class="mt-0.5 text-sm text-zinc-400">
+          Send a sample purchase and watch a rule classify it, or review it yourself.
+        </div>
+      </div>
+      <span class="shrink-0 text-sm font-medium text-emerald-300" aria-hidden="true">Try it →</span>
+    </RouterLink>
 
     <section
       class="rounded-xl border border-zinc-800 bg-zinc-950 p-6 flex flex-col sm:flex-row sm:items-end justify-between gap-6"

@@ -11,6 +11,7 @@ import { db } from '../db';
 import { merchantRules } from '../db/schema';
 import { validate } from '../lib/validate';
 import { invalidateContainsCache } from '../services/classifier';
+import { assertDemoRoom } from '../services/demo';
 
 export const merchantRulesRoute = new Hono()
   .get('/', async (c) => {
@@ -19,6 +20,7 @@ export const merchantRulesRoute = new Hono()
   })
   .post('/', validate('json', MerchantRuleCreateSchema), async (c) => {
     const body = c.req.valid('json');
+    assertDemoRoom('merchantRules');
     const [row] = await db
       .insert(merchantRules)
       .values({

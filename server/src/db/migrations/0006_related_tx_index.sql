@@ -1,0 +1,1 @@
+CREATE INDEX `idx_tx_related` ON `transactions` (`related_tx_id`);

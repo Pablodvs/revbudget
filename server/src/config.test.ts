@@ -27,12 +27,14 @@ describe('parseConfig', () => {
       OLLAMA_URL: '',
       OLLAMA_MODEL: '',
       OLLAMA_TIMEOUT_MS: '',
+      DEMO_MODE: '',
     });
     expect(cfg.PORT).toBe(3000);
     expect(cfg.NODE_ENV).toBe('development');
     expect(cfg.APP_TIMEZONE).toBe('Europe/Madrid');
     expect(cfg.OLLAMA_ENABLED).toBe(true);
     expect(cfg.OLLAMA_URL).toBe('http://localhost:11434');
+    expect(cfg.DEMO_MODE).toBe(false);
     expect(cfg.BOOTSTRAP_ADMIN_EMAIL).toBeUndefined();
     expect(cfg.telegram).toBeNull();
     expect(cfg.trustedOrigins).toEqual(['http://localhost:5173']);
@@ -52,6 +54,35 @@ describe('parseConfig', () => {
     expect(() => parseConfig({ ...REQUIRED, TELEGRAM_CHAT_ID: '42' })).toThrow(
       /TELEGRAM_BOT_TOKEN: set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID together/,
     );
+  });
+
+  test('booleans accept true/1 in any case, and nothing else', () => {
+    for (const v of ['true', 'TRUE', 'True', '1']) {
+      expect(parseConfig({ ...REQUIRED, TRUST_PROXY: v }).TRUST_PROXY).toBe(true);
+      expect(parseConfig({ ...REQUIRED, DEMO_MODE: v }).DEMO_MODE).toBe(true);
+    }
+    for (const v of ['false', 'FALSE', '0', 'yes']) {
+      expect(parseConfig({ ...REQUIRED, TRUST_PROXY: v }).TRUST_PROXY).toBe(false);
+      expect(parseConfig({ ...REQUIRED, OLLAMA_ENABLED: v }).OLLAMA_ENABLED).toBe(false);
+    }
+  });
+
+  test('DEMO_MODE refuses Telegram, even half-configured', () => {
+    const telegram = { TELEGRAM_BOT_TOKEN: '123456:test-token', TELEGRAM_CHAT_ID: '-100123' };
+    expect(() => parseConfig({ ...REQUIRED, ...telegram, DEMO_MODE: 'true' })).toThrow(
+      /DEMO_MODE: leave TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID blank/,
+    );
+    expect(() =>
+      parseConfig({ ...REQUIRED, TELEGRAM_CHAT_ID: '-100123', DEMO_MODE: 'true' }),
+    ).toThrow(/DEMO_MODE: leave TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID blank/);
+    expect(parseConfig({ ...REQUIRED, ...telegram, DEMO_MODE: 'false' }).telegram).not.toBeNull();
+  });
+
+  test('DEMO_MODE turns Ollama off', () => {
+    expect(parseConfig({ ...REQUIRED, OLLAMA_ENABLED: 'true' }).OLLAMA_ENABLED).toBe(true);
+    const demo = parseConfig({ ...REQUIRED, OLLAMA_ENABLED: 'true', DEMO_MODE: 'true' });
+    expect(demo.DEMO_MODE).toBe(true);
+    expect(demo.OLLAMA_ENABLED).toBe(false);
   });
 
   test('rejects the .env.example placeholder secrets', () => {

@@ -2,6 +2,8 @@ import { defineStore } from 'pinia';
 
 type Mode = 'dark' | 'light';
 
+const STORAGE_KEY = 'revbudget:theme';
+
 export const useThemeStore = defineStore('theme', {
   state: () => ({ mode: 'dark' as Mode }),
   getters: {
@@ -24,14 +26,21 @@ export const useThemeStore = defineStore('theme', {
           },
   },
   actions: {
+    // Storage throws when site data is blocked; the choice then just isn't
+    // remembered, rather than the error blanking the whole app.
     init() {
-      const stored = localStorage.getItem('revbudget:theme') as Mode | null;
-      this.mode = stored ?? 'dark';
+      let stored: string | null = null;
+      try {
+        stored = localStorage.getItem(STORAGE_KEY);
+      } catch {}
+      this.mode = stored === 'light' ? 'light' : 'dark';
       this.apply();
     },
     toggle() {
       this.mode = this.mode === 'dark' ? 'light' : 'dark';
-      localStorage.setItem('revbudget:theme', this.mode);
+      try {
+        localStorage.setItem(STORAGE_KEY, this.mode);
+      } catch {}
       this.apply();
     },
     apply() {

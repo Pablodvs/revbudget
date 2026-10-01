@@ -43,6 +43,9 @@ services:
       - SETUID # su-exec root -> bun
       - SETGID # su-exec sets gid + supplementary groups
     mem_limit: 512m
+    # 0 = no limit (prod). The public demo sets APP_CPUS=1 so a busy demo
+    # can't starve other apps on the same host.
+    cpus: ${APP_CPUS:-0}
     pids_limit: 256
 
   cloudflared:

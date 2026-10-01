@@ -38,6 +38,26 @@ RevBudget is a single-tenant, invite-only personal finance app. It runs as one c
 
 Accounts are invite-only, and public sign-up is disabled. **Any signed-in user has full read/write access to all wallets, transactions and rules.** The `admin` role only gates user management (inviting, banning and removing users), and better-auth's admin plugin enforces it server-side. The app is single-tenant by design, so invite only people you would show your bank statements to.
 
+### Public demo
+
+The public demo runs the same code with `DEMO_MODE=true` and publishes its login, so anyone can sign in ([setup](docs/deploy.md#public-demo-instance-coolify--github-app)). These controls contain it:
+
+- **A separate instance.** It has its own container, database, secrets and Cloudflare Tunnel, so nothing it holds or accepts works against prod.
+- **It can't run on real data.** A database only counts as a demo if it holds the demo account, which is created only on an empty database. With `DEMO_MODE` on and transactions but no demo account, the server refuses to start, and the reset refuses too, so a mistyped env var or a shared volume can't cap, lock or wipe real data.
+- **Fake data only.** Everything in it is seeded or typed in by visitors.
+- **A shared, non-admin login.** `demo@example.com` / `revbudget-demo` has the `user` role, so it can't manage users.
+- **Account changes blocked by an allowlist.** Under `/api/auth/*`, only `POST sign-in/email`, `POST sign-out` and `GET get-session` get through. Anything else, such as a password change that would lock every other visitor out, answers 403 `demo_locked`. An allowlist fails closed, so an endpoint added by a better-auth upgrade is blocked too.
+- **No Telegram.** The server refuses to start with `DEMO_MODE` and Telegram configured, so the demo can't reach a real chat.
+- **No Ollama.** `OLLAMA_ENABLED` is forced to `false`, so public input never reaches a model.
+- **A session-bound, rate-limited simulator.** `POST /api/demo/notifications` exists only in demo mode, needs a signed-in session and accepts at most 500 characters. It feeds the same linear-time parser as the webhook, without needing the webhook secret.
+- **Bounded writes.** In demo mode, mutating API calls are rate-limited per client IP, and hard caps on transactions, parse failures, wallets and rules hold even against many IPs. Past a cap, creating answers 403 `demo_full` until the reset. That keeps both the dashboard's queries and the reset fast.
+- **A nightly reset.** At midnight `APP_TIMEZONE`, when the dashboard's month can roll over, all data and sessions are wiped and the demo is seeded again.
+
+Remaining risks, accepted:
+
+- **Vandalism until the reset.** Any visitor can rename, delete or fill the shared data up to its caps, and everyone sees it until the next reset (or a [manual one](docs/deploy.md#reset-the-demo)). The data is fake and the damage lasts a day at most. What visitors type is rendered as text, never HTML, and the production CSP backs that up.
+- **A shared host.** The demo runs next to prod. `mem_limit`, `pids_limit` and `APP_CPUS=1` cap its memory, processes and CPU, and it has the same container hardening. The write caps bound its database, so a flood can't fill the disk prod writes to. It can still use its one CPU and share the host's network, which is a nuisance rather than a data risk, and stopping the demo in Coolify ends it without touching prod.
+
 ## Controls summary
 
 - **Sessions:** better-auth cookie sessions: `HttpOnly`, `SameSite=Lax`, `Secure` with the `__Secure-` prefix in production, and a 7-day expiry. Banning or removing a user revokes their sessions immediately.

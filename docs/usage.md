@@ -7,6 +7,7 @@ This guide covers day-to-day use: how notifications flow, the Telegram bot, the 
 - [Telegram bot](#telegram-bot)
 - [Dashboard](#dashboard)
 - [Users and roles](#users-and-roles)
+- [Demo mode](#demo-mode)
 - [API reference](#api-reference)
 - [Maintenance](#maintenance)
 - [Troubleshooting](#troubleshooting)
@@ -38,7 +39,7 @@ flowchart TD
   | `ignored` | Kept, but excluded from budgets |
 
   Unparseable notifications aren't transactions. They're kept in a separate `parse_failures` table.
-- **Without Telegram** (`TELEGRAM_BOT_TOKEN` or `TELEGRAM_CHAT_ID` unset), processing is the same, minus the messages. Anything that needs a decision waits in the dashboard's Transactions view.
+- **Without Telegram** (`TELEGRAM_BOT_TOKEN` or `TELEGRAM_CHAT_ID` unset), processing is the same, minus the messages. Anything that needs a decision waits in the dashboard's Transactions view, where [one-click actions](#one-click-actions) replace the Telegram buttons.
 
 ## Sending notifications
 
@@ -106,10 +107,25 @@ Sign in at `/login` (there's no sign-up page; see [Users and roles](#users-and-r
 | **Overview** `/` | Month navigator; spent vs. total budget, transaction count and income; one card per wallet with a progress bar (green < 70 %, amber 70–90 %, red ≥ 90 %); latest transactions. Click a card to open the wallet. |
 | **Wallets** `/wallets` | Every wallet, active or archived. **+ New wallet**, **Edit** (name, monthly budget, currency, color, emoji, active) and **Delete**. |
 | **Wallet detail** `/wallet/:id` | One wallet for the selected month: spent vs. budget, income, a cumulative-spending chart against the budget line, and its transactions. |
-| **Transactions** `/transactions` | Filter by month, wallet and status. Click a row to edit wallet, amount, type, status or description. **+ New** adds a manual entry (expense, income, refund or adjustment; an adjustment must reference a related transaction). |
+| **Transactions** `/transactions` | Filter by month, wallet and status. Rows that need a decision have [one-click actions](#one-click-actions). Click a row to edit wallet, amount, type, status or description. **+ New** adds a manual entry (expense, income, refund or adjustment; an adjustment must reference a related transaction). |
 | **Rules** `/rules` | Merchant rules: pattern, match type (`exact` / `contains`), target wallet, and whether Telegram should ask for confirmation. Create, edit and delete. |
 | **Stats** `/stats` | Spend per wallet for the month, a 6-month trend per wallet, and the top 5 merchants. |
 | **Users** `/users` | Admins only. Invite users and remove them. |
+
+### One-click actions
+
+Transactions that need a decision carry buttons, so you can settle them without opening the edit form. They work on every instance, with or without Telegram:
+
+| Status | Buttons |
+|---|---|
+| `pending` | **Classify** (pick a wallet), **Ignore** |
+| `pending_confirmation` | **Confirm → *wallet*** (accept the rule's suggestion), **Change** (pick another wallet), **Ignore** |
+
+They learn rules the way the Telegram buttons do:
+
+- **Classify** learns an `exact` rule for the merchant of an expense, so the next notification from that merchant is classified automatically.
+- **Confirm** and **Change** don't learn a rule, so a rule that requires confirmation keeps asking every time. To stop it asking, turn its confirmation off in **Rules**.
+- **Ignore** never learns a rule.
 
 ### Common tasks
 
@@ -127,13 +143,24 @@ Accounts are invite-only, and public sign-up is disabled.
 - **More users:** an admin opens **Users**, sets the invitee's email, name, initial password and role, and shares the password out of band.
 - **Roles:** every signed-in user has full access to wallets, transactions, rules and stats. `admin` additionally manages users. Removing a user ends their sessions immediately.
 
+## Demo mode
+
+An instance running with `DEMO_MODE=true`, such as the public live demo, is a sandbox on fake data. Setting one up is covered in [deploy.md](deploy.md#public-demo-instance-coolify--github-app).
+
+- **One shared login.** Everyone signs in as `demo@example.com` / `revbudget-demo`, a regular user, so there's no **Users** page. Only sign-in, sign-out and session checks work under `/api/auth/*`. Anything else, such as changing the password, returns 403 `demo_locked`.
+- **Notification simulator.** The dashboard stands in for the phone. Each sample chip sends its text to `POST /api/demo/notifications`, which runs it through the same pipeline as the webhook. Each sample has a known outcome on fresh demo data (`classified`, `pending`, `pending_confirmation` or `parse_failed`), so you can watch it land and settle it with the [one-click actions](#one-click-actions). The simulator needs a session and is rate-limited.
+- **No Telegram, no Ollama.** The server refuses to start with Telegram configured and forces `OLLAMA_ENABLED=false`, so unparseable text is recorded as a parse failure right away.
+- **Nightly reset.** At midnight `APP_TIMEZONE`, all data and sessions are wiped and the demo is seeded again, which signs everyone out.
+
 ## API reference
 
-Everything under `/api` except `/api/health`, `/api/auth/*` and `/api/webhook/*` requires a session cookie (from `POST /api/auth/sign-in/email`). The dashboard calls these routes through a typed client (`hc<AppType>`), so request and response types are checked at compile time.
+Everything under `/api` except `/api/health`, `/api/meta`, `/api/auth/*` and `/api/webhook/*` requires a session cookie (from `POST /api/auth/sign-in/email`). The dashboard calls these routes through a typed client (`hc<AppType>`), so request and response types are checked at compile time.
 
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/api/health` | `{ "ok": true }` |
+| GET | `/api/meta` | `{ demo, demoLogin, resetsAt, samples }`. On a [demo](#demo-mode): `demo: true`, the login as `{ email, password }`, the next reset as ISO-8601, and the simulator's `samples` as `[{ id, label, text, expect }]`. Otherwise `false`, `null`, `null` and `[]`. |
+| POST | `/api/demo/notifications` | Demo only, otherwise a JSON 404. Rate-limited. `{ "text": "…" }` (1 to 500 characters) → `{ "ok": true, "status", "transactionId" }`, where `transactionId` is `null` for `parse_failed`. |
 | POST | `/api/webhook/revolut` | `X-Webhook-Secret` header. See [Sending notifications](#sending-notifications). |
 | POST | `/api/auth/sign-in/email` | Sets the session cookie. 5 attempts/min per IP. |
 | POST | `/api/auth/sign-out` | |
@@ -142,13 +169,13 @@ Everything under `/api` except `/api/health`, `/api/auth/*` and `/api/webhook/*`
 | GET · POST | `/api/wallets` | |
 | GET · PUT · DELETE | `/api/wallets/:id` | DELETE sends the wallet's transactions back to `pending`. |
 | GET · POST | `/api/transactions` | GET filters: `month` (`YYYY-MM`), `walletId`, `status`, `type`, `limit` (≤ 500), `offset` |
-| GET · PUT · DELETE | `/api/transactions/:id` | PUT with a wallet learns an `exact` rule for expenses. |
+| GET · PUT · DELETE | `/api/transactions/:id` | PUT with a wallet learns an `exact` rule for expenses, except when confirming or changing a `pending_confirmation` transaction (as in Telegram). |
 | GET · POST | `/api/merchant-rules` | |
 | PUT · DELETE | `/api/merchant-rules/:id` | |
 | GET | `/api/stats/monthly?month=YYYY-MM` | Totals and per-wallet spend for the month |
 | GET | `/api/stats/trends` | Last 6 months per wallet, plus the top 5 merchants |
 
-App routes share one error shape: `{ "error": "<code>", "issues"?: [{ "path", "message" }], "requestId": "…" }`. The `/api/auth/*` routes are better-auth's own and answer with its `{ "message", "code" }` shape instead (e.g. `INVALID_ORIGIN`). Codes include `unauthorized` (401), `validation_failed` (400, with `issues`), `invalid_reference` (400), `not_found` (404), `duplicate` (409) and route-specific ones such as `wallet_not_found` or `adjustment_requires_related_tx`. A 5xx is always a generic `internal_error`; quote its `requestId` to find it in the logs.
+App routes share one error shape: `{ "error": "<code>", "issues"?: [{ "path", "message" }], "requestId": "…" }`. The `/api/auth/*` routes are better-auth's own and answer with its `{ "message", "code" }` shape instead (e.g. `INVALID_ORIGIN`), except for `demo_locked`. Codes include `unauthorized` (401), `validation_failed` (400, with `issues`), `invalid_reference` (400), `not_found` (404), `duplicate` (409), `demo_locked` (403, an `/api/auth/*` route a [demo](#demo-mode) blocks), `demo_full` (403, a demo's creation caps are reached until the reset) and route-specific ones such as `wallet_not_found` or `adjustment_requires_related_tx`. A 5xx is always a generic `internal_error`; quote its `requestId` to find it in the logs.
 
 ## Maintenance
 

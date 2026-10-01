@@ -15,6 +15,13 @@ const Secret = (name: string) =>
 const withoutBlanks = (env: Record<string, string | undefined>) =>
   Object.fromEntries(Object.entries(env).filter(([, v]) => v !== ''));
 
+// "true" or "1", in any case; anything else is false.
+const Bool = (fallback: boolean) =>
+  z
+    .union([z.boolean(), z.string()])
+    .default(fallback)
+    .transform((v) => (typeof v === 'boolean' ? v : ['true', '1'].includes(v.toLowerCase())));
+
 const EnvSchema = z
   .object({
     PORT: z.coerce.number().int().positive().default(3000),
@@ -28,10 +35,7 @@ const EnvSchema = z
     BETTER_AUTH_URL: z.string().url().optional(),
     BOOTSTRAP_ADMIN_EMAIL: z.string().email().optional(),
     BOOTSTRAP_ADMIN_PASSWORD: z.string().min(12).optional(),
-    TRUST_PROXY: z
-      .union([z.boolean(), z.string()])
-      .default(false)
-      .transform((v) => (typeof v === 'boolean' ? v : v === 'true' || v === '1')),
+    TRUST_PROXY: Bool(false),
     // No default here: localhost must never be a trusted origin in production.
     // load() applies the dev default for non-production environments.
     DASHBOARD_ORIGIN: z.string().url().optional(),
@@ -49,17 +53,13 @@ const EnvSchema = z
     NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
     APP_TIMEZONE: z.string().default('Europe/Madrid'),
     // Include raw notification text (financial PII) in ollama-normalizer logs.
-    LOG_NOTIFICATION_TEXT: z
-      .union([z.boolean(), z.string()])
-      .default(false)
-      .transform((v) => (typeof v === 'boolean' ? v : v === 'true' || v === '1')),
-    OLLAMA_ENABLED: z
-      .union([z.boolean(), z.string()])
-      .default(true)
-      .transform((v) => (typeof v === 'boolean' ? v : v === 'true' || v === '1')),
+    LOG_NOTIFICATION_TEXT: Bool(false),
+    OLLAMA_ENABLED: Bool(true),
     OLLAMA_URL: z.string().url().default('http://localhost:11434'),
     OLLAMA_MODEL: z.string().default('qwen2.5:3b'),
     OLLAMA_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
+    // Public demo instance: fake data, a published login, a nightly reset.
+    DEMO_MODE: Bool(false),
   })
   .superRefine((data, ctx) => {
     if ((data.TELEGRAM_BOT_TOKEN === undefined) !== (data.TELEGRAM_CHAT_ID === undefined)) {
@@ -68,6 +68,16 @@ const EnvSchema = z
         path: [data.TELEGRAM_BOT_TOKEN === undefined ? 'TELEGRAM_BOT_TOKEN' : 'TELEGRAM_CHAT_ID'],
         message:
           'set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID together, or leave both blank to run without the Telegram bot',
+      });
+    }
+    const telegramSet =
+      data.TELEGRAM_BOT_TOKEN !== undefined || data.TELEGRAM_CHAT_ID !== undefined;
+    if (data.DEMO_MODE && telegramSet) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['DEMO_MODE'],
+        message:
+          'leave TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID blank: anyone can use a demo, and it must never message a real chat',
       });
     }
     if (data.NODE_ENV === 'production' && !data.DASHBOARD_ORIGIN && !data.BETTER_AUTH_URL) {
@@ -112,7 +122,14 @@ export function parseConfig(env: Record<string, string | undefined>): AppConfig 
     data.TELEGRAM_BOT_TOKEN !== undefined && data.TELEGRAM_CHAT_ID !== undefined
       ? { botToken: data.TELEGRAM_BOT_TOKEN, chatId: data.TELEGRAM_CHAT_ID }
       : null;
-  return { ...data, DASHBOARD_ORIGIN: dashboardOrigin, trustedOrigins, telegram };
+  return {
+    ...data,
+    // A demo's visitors write the notifications: they must never reach a model.
+    OLLAMA_ENABLED: data.OLLAMA_ENABLED && !data.DEMO_MODE,
+    DASHBOARD_ORIGIN: dashboardOrigin,
+    trustedOrigins,
+    telegram,
+  };
 }
 
 function load(): AppConfig {
