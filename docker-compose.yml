@@ -4,7 +4,9 @@ services:
   app:
     build:
       context: .
-    image: revbudget:local
+    # No fixed image tag: Compose names it <project>-app, so every deployment of
+    # this file (Coolify's prod and demo apps) builds and runs its own image
+    # instead of overwriting a shared one.
     restart: unless-stopped
     env_file: .env
     environment:
