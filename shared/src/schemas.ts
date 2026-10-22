@@ -1,4 +1,5 @@
-import { z } from 'zod';
+// Namespace import: with `import { z }`, Bun's bundler keeps all of Zod's locales.
+import * as z from 'zod';
 import { MIN_CONTAINS_PATTERN_LENGTH, normalizePattern } from './normalize';
 
 export const TransactionStatus = z.enum([
@@ -18,6 +19,12 @@ export type MatchType = z.infer<typeof MatchType>;
 export const MonthString = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Expected YYYY-MM');
 
 const HexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Expected #rrggbb');
+
+// UTC ISO-8601, with or without seconds. Zod 3's datetime() took both, Zod 4's
+// requires seconds, and a webhook client may send minute precision.
+const IsoDateTime = z.union([z.iso.datetime(), z.iso.datetime({ precision: -1 })], {
+  error: (i) => (i.input === undefined ? undefined : 'Invalid datetime'),
+});
 
 // Any well-formed alpha-3 code is accepted by Intl.NumberFormat without throwing;
 // non-alpha junk (e.g. "€12") makes formatCents throw on every render. Uppercase
@@ -58,7 +65,9 @@ export const WalletCreateSchema = z.object({
 });
 export type WalletCreate = z.infer<typeof WalletCreateSchema>;
 
-export const WalletUpdateSchema = WalletCreateSchema.partial();
+// Without currency's default: Zod 4 applies defaults even inside .partial(),
+// which would reset the currency of every wallet an update doesn't mention it on.
+export const WalletUpdateSchema = WalletCreateSchema.extend({ currency: Currency }).partial();
 export type WalletUpdate = z.infer<typeof WalletUpdateSchema>;
 
 export const TransactionSchema = z.object({
@@ -108,7 +117,7 @@ export const TransactionCreateSchema = z
     type: TransactionType,
     merchantDisplay: z.string().min(1).max(128),
     description: z.string().max(256).nullable().optional(),
-    transactionDate: z.string().datetime(),
+    transactionDate: IsoDateTime,
     currency: Currency.optional(),
     relatedTxId: Id.nullable().optional(),
   })
@@ -188,7 +197,7 @@ export type MerchantRuleUpdate = z.infer<typeof MerchantRuleUpdateSchema>;
 
 export const WebhookBodySchema = z.object({
   text: z.string().min(1).max(4096),
-  receivedAt: z.string().datetime().optional(),
+  receivedAt: IsoDateTime.optional(),
 });
 export type WebhookBody = z.infer<typeof WebhookBodySchema>;
 
