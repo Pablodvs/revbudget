@@ -84,16 +84,6 @@ async function logout() {
       <div class="max-w-6xl mx-auto px-4 sm:px-6 py-2 flex items-start sm:items-center gap-3">
         <p class="flex-1 min-w-0">
           <span class="font-medium text-emerald-300">{{ bannerText }}</span>
-          <span class="text-zinc-400">
-            · The Telegram side of the flow is shown in the
-            <a
-              href="https://github.com/Pablodvs/revbudget#readme"
-              target="_blank"
-              rel="noopener noreferrer"
-              class="underline hover:text-zinc-100"
-              >README video<span class="sr-only"> (opens in a new tab)</span></a
-            >.
-          </span>
         </p>
         <button
           type="button"
