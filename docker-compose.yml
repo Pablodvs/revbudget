@@ -54,7 +54,7 @@ services:
     # Pinned tag+digest: this binary is the only ingress boundary, and
     # --no-autoupdate makes an unpinned :latest the sole (uncontrolled) update
     # channel. Updating is now a deliberate version bump here.
-    image: cloudflare/cloudflared:2026.9.3@sha256:072c067d25ccbe61d46e18f0d0723255f2bb5304f7317caa95b27031520ff92c
+    image: cloudflare/cloudflared:2026.10.1@sha256:a15a3b50b8dabd57ac2090e9484c0247dba9dfa1f0df4d298d4317f9d69eb2d5
     profiles: ["tunnel"]
     restart: unless-stopped
     # If TUNNEL_TOKEN is empty, cloudflared exits with a clear error. The profile
