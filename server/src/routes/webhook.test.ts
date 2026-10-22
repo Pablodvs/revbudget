@@ -277,6 +277,17 @@ describe('POST /api/webhook/revolut', () => {
     expect(txs[0]?.merchantDisplay).toBe('Alice');
   });
 
+  test('accepts a receivedAt without seconds', async () => {
+    const res = await postWebhook({
+      text: 'You received €25.00 from Alice',
+      receivedAt: '2026-09-30T10:15Z',
+    });
+    expect(res.status).toBe(200);
+
+    const txs = await db.select().from(transactions);
+    expect(txs[0]?.transactionDate).toBe('2026-09-30T10:15:00.000Z');
+  });
+
   test('refund notification inserts transaction with type=refund', async () => {
     const res = await postWebhook({ text: 'Refund of €3.00 from SPAR' });
     expect(res.status).toBe(200);

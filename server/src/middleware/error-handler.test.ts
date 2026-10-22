@@ -114,4 +114,13 @@ describe('validate', () => {
     expect(status).toBe(200);
     expect(body).toEqual({ kind: 'a', n: 1 });
   });
+
+  test('names a wrong type the way the dashboard expects', async () => {
+    const { body } = await call('/validated', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind: 'a', n: null }),
+    });
+    expect(body.issues).toEqual([{ path: 'n', message: 'Expected number, received null' }]);
+  });
 });

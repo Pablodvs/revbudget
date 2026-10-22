@@ -169,6 +169,14 @@ describe('PUT /api/wallets/:id', () => {
     expect((await req(`/${w.id}`, 'PUT', { name: 'Groceries' })).status).toBe(200);
     expect((await classifyMerchant('mercado central')).wallet?.name).toBe('Groceries');
   });
+
+  // Zod 4 applies defaults inside .partial(): currency's 'EUR' default leaked
+  // into every update that left it out.
+  test('keeps the currency when the update leaves it out', async () => {
+    const w = await seedWallet({ name: 'Travel', currency: 'USD' });
+    const res = await req(`/${w.id}`, 'PUT', { name: 'Trips' });
+    expect(await res.json()).toMatchObject({ name: 'Trips', currency: 'USD' });
+  });
 });
 
 describe('archived wallets in stats', () => {

@@ -1,4 +1,5 @@
-import { z } from 'zod';
+// Namespace import: with `import { z }`, Bun's bundler keeps all of Zod's locales.
+import * as z from 'zod';
 
 // A secret that still reads like .env.example's instructions would be public.
 const Secret = (name: string) =>
@@ -90,13 +91,17 @@ const EnvSchema = z
     }
   });
 
+// Zod 4 words a missing key as "expected string, received undefined".
+const requiredMessage: z.core.$ZodErrorMap = (i) =>
+  i.input === undefined ? 'Required' : undefined;
+
 export type AppConfig = z.infer<typeof EnvSchema> & {
   trustedOrigins: string[];
   telegram: { botToken: string; chatId: number } | null;
 };
 
 export function parseConfig(env: Record<string, string | undefined>): AppConfig {
-  const parsed = EnvSchema.safeParse(withoutBlanks(env));
+  const parsed = EnvSchema.safeParse(withoutBlanks(env), { error: requiredMessage });
   if (!parsed.success) {
     const issues = parsed.error.issues
       .map((i) => `  - ${i.path.join('.') || '(root)'}: ${i.message}`)
